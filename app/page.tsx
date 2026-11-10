@@ -77,26 +77,34 @@ interface PageAuditResult {
   images_missing_alt: number;
   dual_urls_found: string[];
   links_count: number;
+  final_url?: string;
+  fetch_error?: string | null;
+  blocked?: boolean;
+  rate_limited?: boolean;
+  noindex?: boolean;
+  h1_count?: number;
 }
 
 export interface PSIMetrics {
   strategy: 'mobile' | 'desktop';
-  source: 'google_psi' | 'browser_engine';
-  performanceScore: number;
-  accessibilityScore: number;
-  bestPracticesScore: number;
-  seoScore: number;
-  coreWebVitalsPassed: boolean;
+  source: 'google_psi';
+  tested_url?: string;
+  performanceScore: number | null;
+  accessibilityScore: number | null;
+  bestPracticesScore: number | null;
+  seoScore: number | null;
+  coreWebVitalsPassed: boolean | null;
+  cwvBasis?: 'field' | 'lab';
   lab: {
-    lcpMs: number;
+    lcpMs: number | null;
     lcpDisplay: string;
-    tbtMs: number;
+    tbtMs: number | null;
     tbtDisplay: string;
-    cls: number;
+    cls: number | null;
     clsDisplay: string;
-    fcpMs: number;
+    fcpMs: number | null;
     fcpDisplay: string;
-    speedIndexMs: number;
+    speedIndexMs: number | null;
     speedIndexDisplay: string;
   };
   field?: {
@@ -159,12 +167,24 @@ interface BenchmarkReport {
   grade: string;
   executive_assessment: string;
   dimension_scores: {
-    technical: number;
-    schema_entity: number;
-    aeo_geo: number;
-    architecture: number;
-    core_web_vitals: number;
-    intent_conversion: number;
+    technical: number | null;
+    schema_entity: number | null;
+    aeo_geo: number | null;
+    architecture: number | null;
+    core_web_vitals: number | null;
+    intent_conversion: number | null;
+  };
+  warnings?: string[];
+  crawl?: {
+    discovered: { products: number; collections: number; pages: number; blogs: number; articles: number };
+    sitemap_found: boolean;
+    max_pages: number;
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    blocked: number;
+    skipped_for_time: number;
+    duration_ms: number;
   };
   dimension_details?: Record<string, DimensionDetail>;
   critical_deficits?: string[];
@@ -175,9 +195,18 @@ interface BenchmarkReport {
   pages_audited?: PageAuditResult[];
   scripts_summary?: ScriptsSummary;
   pagespeed?: {
-    mobile: PSIMetrics;
-    desktop: PSIMetrics;
+    mobile: PSIMetrics | null;
+    desktop: PSIMetrics | null;
+    errors?: { mobile: string | null; desktop: string | null };
   };
+}
+
+/** Rates a possibly-missing metric. Missing values are never shown as "Good". */
+function rateMetric(v: number | null | undefined, good: number, mid: number | null) {
+  if (v === null || v === undefined) return { label: 'No data', cls: 'bg-slate-500/10 text-slate-400' };
+  if (v <= good) return { label: 'Good', cls: 'bg-emerald-500/10 text-emerald-300' };
+  if (mid === null || v <= mid) return { label: 'Needs Work', cls: 'bg-amber-500/10 text-amber-300' };
+  return { label: 'Poor', cls: 'bg-rose-500/10 text-rose-300' };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -230,6 +259,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 function getGradeColor(grade: string) {
+  if (grade === 'Incomplete') return 'text-slate-300 border-slate-500/30 bg-slate-500/10';
   if (grade.includes('A')) return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
   if (grade.includes('B')) return 'text-sky-400 border-sky-500/30 bg-sky-500/10';
   if (grade.includes('C')) return 'text-amber-400 border-amber-500/30 bg-amber-500/10';
@@ -288,70 +318,137 @@ export default function Page() {
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
 
   const startTimeRef = useRef<number>(0);
+  const finishNowRef = useRef(false);
+  const [maxPages, setMaxPages] = useState(40);
+  const [finishing, setFinishing] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; waitUntil: number; detail: string }>({
+    done: 0,
+    total: 0,
+    waitUntil: 0,
+    detail: '',
+  });
+  const [nowTick, setNowTick] = useState(Date.now());
 
   const loadingSteps = [
-    'Connecting to Shopify Edge CDN & checking robots.txt...',
-    'Parsing sitemap.xml hierarchy (products, collections, pages, blogs)...',
-    'Extracting authentic store catalog via public JSON endpoints...',
-    'Multi-threaded deep DOM crawl in progress with Googlebot crawler...',
-    'Executing Google PageSpeed Insights & Core Web Vitals lab test...',
-    'Validating Google Merchant Center Offer, Shipping & Return schemas...',
-    'Scanning internal links for dual-URL /collections/*/products/* traps...',
-    'Computing 6-Dimension SOHGI Composite Index (0–100)...',
+    'Loading homepage & reading sitemaps...',
+    'Crawling pages at a pace Shopify allows...',
+    'Waiting for Google PageSpeed Insights...',
+    'Scoring and building the report...',
   ];
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
     let elapsed: NodeJS.Timeout;
     if (loading) {
-      let step = 0;
-      timer = setInterval(() => {
-        step = Math.min(step + 1, loadingSteps.length - 1);
-        setLoadingStep(step);
-      }, 1600);
       elapsed = setInterval(() => {
         setLoadingElapsed(Math.round((Date.now() - startTimeRef.current) / 1000));
+        setNowTick(Date.now());
       }, 1000);
     }
-    return () => {
-      clearInterval(timer);
-      clearInterval(elapsed);
-    };
+    return () => clearInterval(elapsed);
   }, [loading]);
+
+  const postJson = async (path: string, payload: any) => {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({ status: 'error', ok: false, message: `HTTP ${res.status}`, error: `HTTP ${res.status}` }));
+    return { res, data };
+  };
+
+  /** Sleeps, but wakes early if the user clicks "Build report now". */
+  const waitInterruptible = async (ms: number) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end && !finishNowRef.current) await new Promise((r) => setTimeout(r, 500));
+  };
+
+  // Give up on the remaining pages if Shopify keeps us paused longer than this in total.
+  const MAX_TOTAL_WAIT_MS = 10 * 60_000;
 
   const handleAudit = async (url: string) => {
     const target = url.trim();
     if (!target) return;
 
     setLoading(true);
+    setFinishing(false);
+    finishNowRef.current = false;
     setLoadingStep(0);
     setLoadingElapsed(0);
+    setProgress({ done: 0, total: 0, waitUntil: 0, detail: '' });
     setReport(null);
     setError(null);
     startTimeRef.current = Date.now();
 
     try {
-      const res = await fetch('/api/audit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: target,
-          psiApiKey: psiApiKey.trim(),
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || data.status === 'error') {
-        setError(data.message || 'Audit failed. The store may be blocking automated crawlers (Cloudflare / bot protection).');
+      // 1. Discover
+      const disc = await postJson('/api/audit/discover', { url: target, maxPages });
+      if (!disc.res.ok || disc.data.status !== 'ok') {
+        setError(disc.data.message || 'Could not load the store.');
         return;
       }
+      const ctx = disc.data.ctx;
 
-      if (data.status === 'ok' && data.report) {
-        setReport(data.report);
-      } else {
-        setError('No report data received from the audit engine.');
+      // 2. PageSpeed runs in parallel with the crawl (each call is its own serverless request)
+      const psiCall = (strategy: 'mobile' | 'desktop') =>
+        postJson('/api/audit/psi', { url: ctx.baseUrl + '/', strategy, psiApiKey: psiApiKey.trim() })
+          .then((r) => r.data)
+          .catch((e: any) => ({ ok: false, error: `PSI request failed: ${e.message}` }));
+      const psiPromise = Promise.all([psiCall('mobile'), psiCall('desktop')]);
+
+      // 3. Crawl in batches, honouring Shopify's Retry-After between batches
+      setLoadingStep(1);
+      let queue: Array<{ url: string; type: string }> = ctx.targets;
+      const pages: any[] = [];
+      let limiter: any = undefined;
+      let totalWait = 0;
+      let skippedReason: string | undefined;
+      setProgress({ done: 0, total: queue.length, waitUntil: 0, detail: '' });
+
+      while (queue.length > 0 && !finishNowRef.current) {
+        const cr = await postJson('/api/audit/crawl', { host: ctx.host, targets: queue, limiter });
+        if (!cr.res.ok || cr.data.status !== 'ok') {
+          skippedReason = `crawl request failed (${cr.data.message || cr.res.status})`;
+          break;
+        }
+        pages.push(...cr.data.results);
+        queue = cr.data.remaining;
+        limiter = cr.data.limiter;
+        setProgress((p) => ({ ...p, done: pages.length, waitUntil: 0, detail: '' }));
+
+        if (cr.data.waitMs > 0 && queue.length > 0) {
+          if (totalWait + cr.data.waitMs > MAX_TOTAL_WAIT_MS) {
+            skippedReason = `Shopify was still rate-limiting after ${Math.round(totalWait / 1000)}s of waiting`;
+            break;
+          }
+          totalWait += cr.data.waitMs;
+          setProgress((p) => ({
+            ...p,
+            waitUntil: Date.now() + cr.data.waitMs,
+            detail: 'Shopify asked us to pause (HTTP 429 with Retry-After). Waiting, then continuing where we left off.',
+          }));
+          await waitInterruptible(cr.data.waitMs + 500);
+          setProgress((p) => ({ ...p, waitUntil: 0, detail: '' }));
+        }
       }
+      if (queue.length > 0 && !skippedReason) skippedReason = finishNowRef.current ? 'stopped early by user' : 'crawl stopped';
+
+      // 4. PageSpeed + report
+      setLoadingStep(2);
+      const [mobile, desktop] = await psiPromise;
+      setLoadingStep(3);
+      const rep = await postJson('/api/audit/report', {
+        ctx,
+        pages,
+        psi: { mobile, desktop },
+        skippedCount: queue.length,
+        skippedReason,
+      });
+      if (!rep.res.ok || rep.data.status !== 'ok' || !rep.data.report) {
+        setError(rep.data.message || 'No report data received from the audit engine.');
+        return;
+      }
+      setReport(rep.data.report);
     } catch (e: any) {
       setError(`Network error: ${e.message}`);
     } finally {
@@ -399,8 +496,12 @@ export default function Page() {
     md += `**Assessment:** ${report.executive_assessment}\n\n`;
     md += `## Dimension Scores\n`;
     Object.entries(report.dimension_scores).forEach(([k, v]) => {
-      md += `- **${k}**: ${v}/100\n`;
+      md += `- **${k}**: ${v === null ? 'Not scored' : `${v}/100`}\n`;
     });
+    if (report.warnings?.length) {
+      md += `\n## Data Quality Notes\n`;
+      report.warnings.forEach((w) => (md += `- ${w}\n`));
+    }
     md += `\n## Critical Deficits\n`;
     report.critical_deficits?.forEach((d) => {
       md += `- ⚠️ ${d}\n`;
@@ -446,6 +547,8 @@ export default function Page() {
 
   // Current active PSI metrics
   const activePsi = report?.pagespeed ? report.pagespeed[psiStrategy] : null;
+  const activePsiError = report?.pagespeed?.errors?.[psiStrategy] ?? null;
+  const mobileLcpRating = rateMetric(report?.pagespeed?.mobile?.lab.lcpMs, 2500, 4000);
 
   return (
     <div className="min-h-screen text-slate-100 flex flex-col bg-slate-950 font-sans antialiased">
@@ -527,8 +630,24 @@ export default function Page() {
               </button>
             </div>
 
-            {/* Optional PSI API Key toggle */}
+            {/* Optional PSI API Key toggle + page limit */}
             <div className="pt-2 text-left">
+              <div className="float-right text-xs text-slate-400 flex items-center gap-1.5">
+                <label htmlFor="max-pages">Pages to crawl</label>
+                <select
+                  id="max-pages"
+                  value={maxPages}
+                  onChange={(e) => setMaxPages(Number(e.target.value))}
+                  disabled={loading}
+                  className="bg-slate-900 border border-slate-700 rounded-md px-1.5 py-0.5 text-slate-200"
+                >
+                  {[20, 40, 80, 150].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowApiKeyInput(!showApiKeyInput)}
@@ -551,7 +670,7 @@ export default function Page() {
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono"
                   />
                   <p className="text-[11px] text-slate-500">
-                    Optional: Guarantees full Google Cloud quota for real-time mobile/desktop tests. If left blank, the tool queries Google unauthenticated with automated high-fidelity lab modeling.
+                    Recommended. Without a key, Google&rsquo;s shared quota often returns HTTP 429 and PageSpeed results will be marked unavailable (they are never estimated). You can also set PSI_API_KEY on the server.
                   </p>
                 </div>
               )}
@@ -593,6 +712,38 @@ export default function Page() {
                 <p className="text-sm font-medium text-emerald-400 animate-pulse">
                   {loadingSteps[loadingStep]}
                 </p>
+                {progress.total > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="text-xs text-slate-300 font-mono">
+                      {progress.done} / {progress.total} pages crawled
+                    </div>
+                    <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden max-w-xs mx-auto">
+                      <div
+                        className="h-full bg-emerald-400 transition-all duration-500"
+                        style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {progress.waitUntil > 0 && (
+                  <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 max-w-md mx-auto">
+                    {progress.detail} Resuming in{' '}
+                    <span className="font-mono font-bold">{Math.max(0, Math.ceil((progress.waitUntil - nowTick) / 1000))}s</span>.
+                  </div>
+                )}
+                {loadingStep === 1 && (
+                  <button
+                    type="button"
+                    disabled={finishing}
+                    onClick={() => {
+                      finishNowRef.current = true;
+                      setFinishing(true);
+                    }}
+                    className="mt-2 text-xs px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 hover:border-emerald-500/50 text-slate-300 disabled:opacity-50"
+                  >
+                    {finishing ? 'Finishing current batch…' : 'Build report now with pages crawled so far'}
+                  </button>
+                )}
               </div>
               <div className="flex justify-center gap-1.5">
                 {loadingSteps.map((_, i) => (
@@ -694,29 +845,53 @@ export default function Page() {
                   <span className="text-xs font-semibold text-slate-400">Pages Audited</span>
                   <div className="my-2">
                     <span className="text-3xl font-black text-emerald-400">
-                      {pages.length || 1}
+                      {report.crawl ? report.crawl.succeeded : pages.length}
                     </span>
+                    {report.crawl && report.crawl.failed > 0 && (
+                      <span className="text-sm font-bold text-rose-400 ml-2">+{report.crawl.failed} failed</span>
+                    )}
                   </div>
-                  <span className="text-[11px] text-slate-500">Real sitemap &amp; catalog URLs</span>
+                  <span className="text-[11px] text-slate-500">
+                    {report.crawl
+                      ? `of ${
+                          report.crawl.discovered.products +
+                          report.crawl.discovered.collections +
+                          report.crawl.discovered.pages +
+                          report.crawl.discovered.articles +
+                          1
+                        } discovered URLs (${report.crawl.discovered.products} products, ${report.crawl.discovered.collections} collections)`
+                      : 'Real sitemap & catalog URLs'}
+                  </span>
                 </div>
                 <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
                   <span className="text-xs font-semibold text-slate-400">Product Schema Coverage</span>
                   <div className="my-2">
                     <span className="text-3xl font-black text-amber-400">
-                      {report.dimension_details?.schema_entity?.metrics?.product_schema_ratio ?? 0}%
+                      {report.dimension_details?.schema_entity?.metrics?.product_schema_ratio ?? '—'}
+                      {report.dimension_details?.schema_entity?.metrics?.product_schema_ratio != null && '%'}
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-500">Google Rich Snippet eligible</span>
+                  <span className="text-[11px] text-slate-500">
+                    Complete schema · {report.dimension_details?.schema_entity?.metrics?.product_required_ok_ratio ?? '—'}% meet Google&rsquo;s required fields
+                  </span>
                 </div>
                 <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
                   <span className="text-xs font-semibold text-slate-400">Mobile Speed &amp; LCP</span>
                   <div className="my-2">
-                    <span className={`text-3xl font-black ${activePsi?.lab.lcpMs && activePsi.lab.lcpMs <= 2500 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {activePsi?.lab.lcpDisplay || (report.dimension_details?.core_web_vitals?.metrics?.mobile_lcp_seconds ?? '—') + 's'}
+                    <span className={`text-3xl font-black ${mobileLcpRating.label === 'Good' ? 'text-emerald-400' : mobileLcpRating.label === 'No data' ? 'text-slate-500' : 'text-amber-400'}`}>
+                      {report.pagespeed?.mobile?.lab.lcpMs != null ? report.pagespeed.mobile.lab.lcpDisplay : 'N/A'}
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-500">
-                    CWV Status: {activePsi?.coreWebVitalsPassed ? '✓ Passed' : '⚠️ Needs Work'}
+                    {report.pagespeed?.mobile
+                      ? `CWV: ${
+                          report.pagespeed.mobile.coreWebVitalsPassed === null
+                            ? 'no data'
+                            : report.pagespeed.mobile.coreWebVitalsPassed
+                            ? '✓ Passed'
+                            : '⚠️ Needs Work'
+                        } (${report.pagespeed.mobile.cwvBasis === 'field' ? 'real-user data' : 'lab data'})`
+                      : 'PageSpeed unavailable this run'}
                   </span>
                 </div>
                 <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
@@ -732,6 +907,24 @@ export default function Page() {
                 </div>
               </div>
             </div>
+
+            {/* ── Data quality warnings ── */}
+            {report.warnings && report.warnings.length > 0 && (
+              <div className="border border-amber-500/30 bg-amber-500/5 rounded-2xl p-5 space-y-2">
+                <div className="flex items-center gap-2 text-amber-300 text-sm font-bold">
+                  <AlertTriangle className="w-4 h-4" />
+                  Data quality notes ({report.warnings.length})
+                </div>
+                <ul className="space-y-1">
+                  {report.warnings.map((w, i) => (
+                    <li key={i} className="text-xs text-amber-200/80 flex items-start gap-1.5">
+                      <span className="text-amber-400 mt-0.5">•</span>
+                      <span>{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* ── SECTION 2: 6 Dimensions ── */}
             <div className="space-y-4">
@@ -753,17 +946,23 @@ export default function Page() {
                   { key: 'core_web_vitals', label: 'Speed & Core Web Vitals', weight: '15%', color: 'bg-rose-400', desc: 'Mobile LCP, Cumulative Layout Shift, Total Blocking Time, script bloat.' },
                   { key: 'intent_conversion', label: 'Intent & Conversion Alignment', weight: '10%', color: 'bg-teal-400', desc: 'Above-fold product visibility, trust proofs, commercial query alignment.' },
                 ].map(({ key, label, weight, color, desc }) => {
-                  const dimScore = report.dimension_scores[key as keyof typeof report.dimension_scores] ?? 0;
+                  const rawScore = report.dimension_scores[key as keyof typeof report.dimension_scores];
+                  const notScored = rawScore === null || rawScore === undefined;
+                  const dimScore = rawScore ?? 0;
                   const detail = report.dimension_details?.[key];
                   return (
-                    <div key={key} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3">
+                    <div key={key} className={`bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-3 ${notScored ? 'opacity-70' : ''}`}>
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase">{weight}</span>
-                        <span className={`text-lg font-black ${dimScore >= 80 ? 'text-emerald-400' : dimScore >= 60 ? 'text-amber-400' : 'text-rose-400'}`}>{dimScore}/100</span>
+                        {notScored ? (
+                          <span className="text-sm font-bold text-slate-500">Not scored</span>
+                        ) : (
+                          <span className={`text-lg font-black ${dimScore >= 80 ? 'text-emerald-400' : dimScore >= 60 ? 'text-amber-400' : 'text-rose-400'}`}>{dimScore}/100</span>
+                        )}
                       </div>
                       <h4 className="font-bold text-slate-200 text-sm">{label}</h4>
                       <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div className={`h-full ${color} transition-all duration-700`} style={{ width: `${dimScore}%` }} />
+                        <div className={`h-full ${color} transition-all duration-700`} style={{ width: `${notScored ? 0 : dimScore}%` }} />
                       </div>
                       <p className="text-xs text-slate-400 leading-relaxed">{desc}</p>
                       {detail?.deductions && detail.deductions.length > 0 && (
@@ -783,7 +982,7 @@ export default function Page() {
             </div>
 
             {/* ── SECTION 2.5: Real Google PageSpeed Insights & Core Web Vitals Engine ── */}
-            {activePsi && (
+            {report.pagespeed && (
               <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 space-y-6">
                 <div className="flex items-center justify-between flex-wrap gap-4 border-b border-slate-800 pb-4">
                   <div className="flex items-center gap-3">
@@ -791,12 +990,20 @@ export default function Page() {
                     <div>
                       <h3 className="text-base font-bold text-white flex items-center gap-2">
                         Google PageSpeed Insights &amp; Core Web Vitals
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          {activePsi.source === 'google_psi' ? 'Google PSI API' : 'Calibrated Lighthouse 10+ Engine'}
-                        </span>
+                        {activePsi ? (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            Live Google PSI result
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                            Unavailable
+                          </span>
+                        )}
                       </h3>
                       <p className="text-xs text-slate-400">
-                        Evaluated with real 75th percentile Core Web Vitals thresholds (INP, LCP, CLS, TBT).
+                        {activePsi
+                          ? `Tested ${activePsi.tested_url || 'homepage'} · CWV verdict from ${activePsi.cwvBasis === 'field' ? 'real-user (CrUX) 75th percentile data' : 'lab data (no CrUX field data for this site)'}.`
+                          : 'Homepage only. Scores are never estimated when Google does not return a result.'}
                       </p>
                     </div>
                   </div>
@@ -830,6 +1037,16 @@ export default function Page() {
                   </div>
                 </div>
 
+                {!activePsi ? (
+                  <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/5 text-xs text-rose-200 space-y-1">
+                    <div className="font-bold text-rose-300">No {psiStrategy} PageSpeed data for this run</div>
+                    <div className="font-mono">{activePsiError || 'Unknown error'}</div>
+                    <div className="text-rose-200/70">
+                      The Core Web Vitals dimension was excluded from the overall score. Add a Google PSI API key and re-run to get real data.
+                    </div>
+                  </div>
+                ) : (
+                <>
                 {/* 4 Category Gauges */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   {[
@@ -846,15 +1063,15 @@ export default function Page() {
                         {label}
                       </span>
                       <div className="text-3xl font-black">
-                        <span className={catScore >= 90 ? 'text-emerald-400' : catScore >= 50 ? 'text-amber-400' : 'text-rose-400'}>
-                          {catScore}
+                        <span className={catScore === null ? 'text-slate-500' : catScore >= 90 ? 'text-emerald-400' : catScore >= 50 ? 'text-amber-400' : 'text-rose-400'}>
+                          {catScore ?? '—'}
                         </span>
                         <span className="text-xs text-slate-500">/100</span>
                       </div>
                       <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className={`h-full ${catScore >= 90 ? 'bg-emerald-400' : catScore >= 50 ? 'bg-amber-400' : 'bg-rose-400'}`}
-                          style={{ width: `${catScore}%` }}
+                          className={`h-full ${catScore === null ? '' : catScore >= 90 ? 'bg-emerald-400' : catScore >= 50 ? 'bg-amber-400' : 'bg-rose-400'}`}
+                          style={{ width: `${catScore ?? 0}%` }}
                         />
                       </div>
                     </div>
@@ -877,7 +1094,9 @@ export default function Page() {
                     )}
                     <div>
                       <h4 className="text-xs font-bold text-white">
-                        {activePsi.coreWebVitalsPassed
+                        {activePsi.coreWebVitalsPassed === null
+                          ? 'Core Web Vitals Assessment: NOT ENOUGH DATA'
+                          : activePsi.coreWebVitalsPassed
                           ? 'Core Web Vitals Assessment: PASSED'
                           : 'Core Web Vitals Assessment: FAILED / REQUIRES OPTIMIZATION'}
                       </h4>
@@ -902,78 +1121,25 @@ export default function Page() {
                 {/* Lab Metrics Scorecards (LCP, TBT, CLS, FCP, SI) */}
                 <div className="space-y-3">
                   <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    Lighthouse Lab Diagnostics ({psiStrategy === 'mobile' ? 'Simulated Moto G Power on 4G' : 'Desktop Browser'})
+                    Lighthouse Lab Diagnostics ({psiStrategy === 'mobile' ? 'Emulated Moto G Power, slow 4G' : 'Desktop'})
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-                    {/* LCP */}
-                    <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="font-bold">LCP</span>
-                        <span className="text-[10px] text-slate-500">Target &le; 2.5s</span>
+                    {[
+                      { label: 'LCP', target: 'Target ≤ 2.5s', display: activePsi.lab.lcpDisplay, rating: rateMetric(activePsi.lab.lcpMs, 2500, 4000) },
+                      { label: 'TBT (INP Proxy)', target: 'Target ≤ 200ms', display: activePsi.lab.tbtDisplay, rating: rateMetric(activePsi.lab.tbtMs, 200, 600) },
+                      { label: 'CLS', target: 'Target ≤ 0.1', display: activePsi.lab.clsDisplay, rating: rateMetric(activePsi.lab.cls, 0.1, 0.25) },
+                      { label: 'FCP', target: 'Target ≤ 1.8s', display: activePsi.lab.fcpDisplay, rating: rateMetric(activePsi.lab.fcpMs, 1800, 3000) },
+                      { label: 'Speed Index', target: 'Target ≤ 3.4s', display: activePsi.lab.speedIndexDisplay, rating: rateMetric(activePsi.lab.speedIndexMs, 3400, 5800) },
+                    ].map((m) => (
+                      <div key={m.label} className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                          <span className="font-bold">{m.label}</span>
+                          <span className="text-[10px] text-slate-500">{m.target}</span>
+                        </div>
+                        <div className="text-xl font-black text-white">{m.display}</div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${m.rating.cls}`}>{m.rating.label}</span>
                       </div>
-                      <div className="text-xl font-black text-white">{activePsi.lab.lcpDisplay}</div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
-                        activePsi.lab.lcpMs <= 2500 ? 'bg-emerald-500/10 text-emerald-300' : activePsi.lab.lcpMs <= 4000 ? 'bg-amber-500/10 text-amber-300' : 'bg-rose-500/10 text-rose-300'
-                      }`}>
-                        {activePsi.lab.lcpMs <= 2500 ? 'Good' : activePsi.lab.lcpMs <= 4000 ? 'Needs Work' : 'Poor'}
-                      </span>
-                    </div>
-
-                    {/* TBT */}
-                    <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="font-bold">TBT (INP Proxy)</span>
-                        <span className="text-[10px] text-slate-500">Target &le; 200ms</span>
-                      </div>
-                      <div className="text-xl font-black text-white">{activePsi.lab.tbtDisplay}</div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
-                        activePsi.lab.tbtMs <= 200 ? 'bg-emerald-500/10 text-emerald-300' : activePsi.lab.tbtMs <= 600 ? 'bg-amber-500/10 text-amber-300' : 'bg-rose-500/10 text-rose-300'
-                      }`}>
-                        {activePsi.lab.tbtMs <= 200 ? 'Good' : activePsi.lab.tbtMs <= 600 ? 'Needs Work' : 'Poor'}
-                      </span>
-                    </div>
-
-                    {/* CLS */}
-                    <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="font-bold">CLS</span>
-                        <span className="text-[10px] text-slate-500">Target &le; 0.1</span>
-                      </div>
-                      <div className="text-xl font-black text-white">{activePsi.lab.clsDisplay}</div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
-                        activePsi.lab.cls <= 0.1 ? 'bg-emerald-500/10 text-emerald-300' : activePsi.lab.cls <= 0.25 ? 'bg-amber-500/10 text-amber-300' : 'bg-rose-500/10 text-rose-300'
-                      }`}>
-                        {activePsi.lab.cls <= 0.1 ? 'Good' : activePsi.lab.cls <= 0.25 ? 'Needs Work' : 'Poor'}
-                      </span>
-                    </div>
-
-                    {/* FCP */}
-                    <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="font-bold">FCP</span>
-                        <span className="text-[10px] text-slate-500">Target &le; 1.8s</span>
-                      </div>
-                      <div className="text-xl font-black text-white">{activePsi.lab.fcpDisplay}</div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
-                        activePsi.lab.fcpMs <= 1800 ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'
-                      }`}>
-                        {activePsi.lab.fcpMs <= 1800 ? 'Good' : 'Needs Work'}
-                      </span>
-                    </div>
-
-                    {/* Speed Index */}
-                    <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span className="font-bold">Speed Index</span>
-                        <span className="text-[10px] text-slate-500">Target &le; 3.4s</span>
-                      </div>
-                      <div className="text-xl font-black text-white">{activePsi.lab.speedIndexDisplay}</div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block ${
-                        activePsi.lab.speedIndexMs <= 3400 ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'
-                      }`}>
-                        {activePsi.lab.speedIndexMs <= 3400 ? 'Good' : 'Needs Work'}
-                      </span>
-                    </div>
+                    ))}
                   </div>
                 </div>
 
@@ -999,6 +1165,8 @@ export default function Page() {
                       ))}
                     </div>
                   </div>
+                )}
+                </>
                 )}
               </div>
             )}
@@ -1168,8 +1336,13 @@ export default function Page() {
                           </td>
                           <td className="py-2.5 px-4">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${getStatusColor(p.status_code)}`}>
-                              {p.status_code}
+                              {p.status_code || 'ERR'}
                             </span>
+                            {p.fetch_error && (
+                              <span className="block text-[9px] text-rose-400/80 mt-0.5" title={p.fetch_error}>
+                                {p.blocked ? 'bot challenge' : p.rate_limited ? 'rate limited' : p.fetch_error}
+                              </span>
+                            )}
                           </td>
                           <td className={`py-2.5 px-4 font-mono font-bold ${getLatencyColor(p.response_time_ms)}`}>
                             {p.response_time_ms}ms
