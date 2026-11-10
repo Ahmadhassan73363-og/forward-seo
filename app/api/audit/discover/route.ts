@@ -11,7 +11,7 @@ export async function POST(req: Request): Promise<Response> {
     const body = await req.json().catch(() => ({}));
     const input = normalizeInput(body.url);
     if ('error' in input) return NextResponse.json({ status: 'error', message: input.error }, { status: 400 });
-    const d = await discover(input.url, clampMaxPages(body.maxPages));
+    const d = await discover(input.url, clampMaxPages(body.maxPages, true));
     if (d.ok === false) return NextResponse.json({ status: 'error', message: d.message }, { status: d.status });
     return NextResponse.json({ status: 'ok', ctx: d.ctx });
   } catch (err: any) {

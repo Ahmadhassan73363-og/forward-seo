@@ -165,7 +165,10 @@ export const CATALOG_GAP_MIN_MS = 700;
 export const CATALOG_GAP_MAX_MS = 6000;
 export const OTHER_GAP_MS = 250; // homepage, /pages, /blogs
 export const DEFAULT_MAX_PAGES = 40;
+/** Cap for the single-request /api/audit route, which must finish inside one 60s invocation. */
 export const HARD_MAX_PAGES = 150;
+/** Safety cap for "all pages" mode in the batched flow (browser drives the crawl). */
+export const ALL_PAGES_LIMIT = 25_000;
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -1028,6 +1031,4 @@ export function allocate(budget: number, pools: Record<string, string[]>, weight
 
 // ─── Scoring helpers ────────────────────────────────────────────────────────
 
-export const ratio = (num: number, den: number) => (den === 0 ? null : num / den);
-export const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-export const round1 = (x: number) => Math.round(x * 10) / 10;
+export { ratio, avg, round1 } from "./scoring";

@@ -1,11 +1,6 @@
-import {
-  PageAuditResult,
-  PSIResult,
-  DeficitDetail,
-  ratio,
-  avg,
-  round1,
-} from './core';
+// Browser-safe: only type imports from core (which pulls in cheerio).
+import type { PageAuditResult, PSIResult, DeficitDetail } from './core';
+import { ratio, avg, round1 } from './scoring';
 
 export interface DiscoverySummary {
   counts: { products: number; collections: number; pages: number; blogs: number; articles: number };
@@ -42,7 +37,8 @@ export function buildReport(input: BuildReportInput) {
   const started = ctx.startedAt;
   const skippedForTime = skippedCount;
   const warnings = [...ctx.warnings];
-  const totalDiscovered = discovery.counts.products + discovery.counts.collections + discovery.counts.pages + discovery.counts.articles;
+  const totalDiscovered =
+    discovery.counts.products + discovery.counts.collections + discovery.counts.pages + discovery.counts.articles + discovery.counts.blogs;
 
   if (skippedCount > 0) warnings.push(`${skippedCount} selected pages were not crawled (${input.skippedReason || 'time budget reached'}).`);
 

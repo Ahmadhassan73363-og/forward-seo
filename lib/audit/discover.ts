@@ -9,6 +9,7 @@ import {
   sample,
   DEFAULT_MAX_PAGES,
   HARD_MAX_PAGES,
+  ALL_PAGES_LIMIT,
 } from './core';
 import type { AuditContext } from './report';
 
@@ -25,8 +26,14 @@ export function normalizeInput(raw: string): { url: URL } | { error: string } {
   }
 }
 
-export function clampMaxPages(n: any) {
-  return Math.max(5, Math.min(HARD_MAX_PAGES, Number(n) || DEFAULT_MAX_PAGES));
+/**
+ * `allowAll` is only for the batched flow, where the browser can keep calling /crawl for as long
+ * as a full crawl takes. "all" (or 0) means every discovered URL, up to ALL_PAGES_LIMIT.
+ */
+export function clampMaxPages(n: any, allowAll = false) {
+  const cap = allowAll ? ALL_PAGES_LIMIT : HARD_MAX_PAGES;
+  if (allowAll && (n === 'all' || n === 0 || n === '0')) return ALL_PAGES_LIMIT;
+  return Math.max(5, Math.min(cap, Number(n) || DEFAULT_MAX_PAGES));
 }
 
 /** Loads the homepage, reads sitemaps, and picks an evenly spread sample of pages to crawl. */
@@ -92,14 +99,19 @@ export async function discover(parsed: URL, maxPages: number): Promise<DiscoverR
     collection: discovery.collections,
     page: discovery.pages,
     article: discovery.articles,
+    blog: discovery.blogs,
   };
-  const alloc = allocate(maxPages - 1, pools, { product: 0.45, collection: 0.3, page: 0.1, article: 0.15 });
+  const alloc = allocate(maxPages - 1, pools, { product: 0.45, collection: 0.3, page: 0.1, article: 0.13, blog: 0.02 });
   // Interleave types so non-catalog pages can be fetched while catalog routes are paused.
   const perType = (Object.keys(pools) as Array<keyof typeof pools>).map((t) => sample(pools[t], alloc[t]).map((url) => ({ url, type: t as string })));
   const targets: Array<{ url: string; type: string }> = [];
   for (let i = 0; perType.some((l) => i < l.length); i++) perType.forEach((l) => l[i] && targets.push(l[i]));
 
-  const totalDiscovered = discovery.products.length + discovery.collections.length + discovery.pages.length + discovery.articles.length;
+  const totalDiscovered =
+    discovery.products.length + discovery.collections.length + discovery.pages.length + discovery.articles.length + discovery.blogs.length;
+  if (maxPages >= ALL_PAGES_LIMIT && totalDiscovered + 1 > ALL_PAGES_LIMIT) {
+    warnings.push(`This store has ${totalDiscovered} URLs; "all pages" mode is capped at ${ALL_PAGES_LIMIT}.`);
+  }
   if (totalDiscovered === 0) warnings.push('No product, collection, page or article URLs could be discovered (sitemap and catalog JSON both empty or blocked).');
   if (totalDiscovered > targets.length) {
     warnings.push(`Audited a sample of ${targets.length} of ${totalDiscovered} discovered URLs (spread evenly across the catalog). Increase the page limit for more coverage.`);

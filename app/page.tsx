@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { buildReport } from '@/lib/audit/report';
 import {
   Search,
   Zap,
@@ -299,6 +300,17 @@ function safeHostname(url: string) {
   }
 }
 
+/** Rows rendered per step in large tables/lists (a full crawl can return thousands). */
+const PAGE_TABLE_STEP = 100;
+const AFFECTED_URLS_SHOWN = 200;
+
+function formatDuration(ms: number) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Page() {
@@ -319,14 +331,15 @@ export default function Page() {
 
   const startTimeRef = useRef<number>(0);
   const finishNowRef = useRef(false);
-  const [maxPages, setMaxPages] = useState(40);
+  const [maxPages, setMaxPages] = useState<number | 'all'>(40);
   const [finishing, setFinishing] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number; waitUntil: number; detail: string }>({
+  const [progress, setProgress] = useState<{ done: number; total: number; waitUntil: number; detail: string; etaMs?: number }>({
     done: 0,
     total: 0,
     waitUntil: 0,
     detail: '',
   });
+  const [pageTableLimit, setPageTableLimit] = useState(PAGE_TABLE_STEP);
   const [nowTick, setNowTick] = useState(Date.now());
 
   const loadingSteps = [
@@ -363,8 +376,12 @@ export default function Page() {
     while (Date.now() < end && !finishNowRef.current) await new Promise((r) => setTimeout(r, 500));
   };
 
-  // Give up on the remaining pages if Shopify keeps us paused longer than this in total.
-  const MAX_TOTAL_WAIT_MS = 10 * 60_000;
+  // Give up if Shopify keeps us paused this long without a single page getting through.
+  const MAX_STALLED_WAIT_MS = 10 * 60_000;
+  // Targets sent per /crawl call; the browser holds the full queue (can be thousands of URLs).
+  const CRAWL_CHUNK = 60;
+  // Keep full JSON-LD only for this many pages so huge crawls don't exhaust browser memory.
+  const KEEP_JSONLD_PAGES = 200;
 
   const handleAudit = async (url: string) => {
     const target = url.trim();
@@ -401,27 +418,36 @@ export default function Page() {
       let queue: Array<{ url: string; type: string }> = ctx.targets;
       const pages: any[] = [];
       let limiter: any = undefined;
-      let totalWait = 0;
+      let stalledWait = 0;
       let skippedReason: string | undefined;
-      setProgress({ done: 0, total: queue.length, waitUntil: 0, detail: '' });
+      const crawlStart = Date.now();
+      setProgress({ done: 0, total: queue.length, waitUntil: 0, detail: '', etaMs: 0 });
 
       while (queue.length > 0 && !finishNowRef.current) {
-        const cr = await postJson('/api/audit/crawl', { host: ctx.host, targets: queue, limiter });
+        const chunk = queue.slice(0, CRAWL_CHUNK);
+        const cr = await postJson('/api/audit/crawl', { host: ctx.host, targets: chunk, limiter });
         if (!cr.res.ok || cr.data.status !== 'ok') {
           skippedReason = `crawl request failed (${cr.data.message || cr.res.status})`;
           break;
         }
-        pages.push(...cr.data.results);
-        queue = cr.data.remaining;
+        for (const r of cr.data.results) {
+          if (pages.length >= KEEP_JSONLD_PAGES) r.json_ld_entities = [];
+          pages.push(r);
+        }
+        // Unfinished items from this chunk go back to the front of the queue.
+        queue = [...cr.data.remaining, ...queue.slice(CRAWL_CHUNK)];
         limiter = cr.data.limiter;
-        setProgress((p) => ({ ...p, done: pages.length, waitUntil: 0, detail: '' }));
+        if (cr.data.results.length > 0) stalledWait = 0;
+        const elapsed = Date.now() - crawlStart;
+        const etaMs = pages.length > 0 ? Math.round((elapsed / pages.length) * queue.length) : 0;
+        setProgress((p) => ({ ...p, done: pages.length, waitUntil: 0, detail: '', etaMs }));
 
         if (cr.data.waitMs > 0 && queue.length > 0) {
-          if (totalWait + cr.data.waitMs > MAX_TOTAL_WAIT_MS) {
-            skippedReason = `Shopify was still rate-limiting after ${Math.round(totalWait / 1000)}s of waiting`;
+          if (stalledWait + cr.data.waitMs > MAX_STALLED_WAIT_MS) {
+            skippedReason = `Shopify was still rate-limiting after ${Math.round(stalledWait / 1000)}s of waiting with no progress`;
             break;
           }
-          totalWait += cr.data.waitMs;
+          stalledWait += cr.data.waitMs;
           setProgress((p) => ({
             ...p,
             waitUntil: Date.now() + cr.data.waitMs,
@@ -437,18 +463,17 @@ export default function Page() {
       setLoadingStep(2);
       const [mobile, desktop] = await psiPromise;
       setLoadingStep(3);
-      const rep = await postJson('/api/audit/report', {
+      // Scored in the browser: thousands of page results would exceed serverless body limits.
+      const built = buildReport({
         ctx,
         pages,
-        psi: { mobile, desktop },
+        psiMobileRes: mobile,
+        psiDesktopRes: desktop,
         skippedCount: queue.length,
         skippedReason,
       });
-      if (!rep.res.ok || rep.data.status !== 'ok' || !rep.data.report) {
-        setError(rep.data.message || 'No report data received from the audit engine.');
-        return;
-      }
-      setReport(rep.data.report);
+      setPageTableLimit(PAGE_TABLE_STEP);
+      setReport(built as unknown as BenchmarkReport);
     } catch (e: any) {
       setError(`Network error: ${e.message}`);
     } finally {
@@ -513,7 +538,7 @@ export default function Page() {
     if (report.pages_audited?.length) {
       md += `\n## Pages Audited (${report.pages_audited.length} pages)\n\n`;
       md += `| URL | Type | Status | Response | Schema | Apps |\n|---|---|---|---|---|---|\n`;
-      report.pages_audited.slice(0, 50).forEach((p) => {
+      report.pages_audited.forEach((p) => {
         md += `| ${p.url} | ${p.page_type} | ${p.status_code} | ${p.response_time_ms}ms | ${p.schema_score.toFixed(0)}% | ${p.detected_apps.join(', ')} |\n`;
       });
     }
@@ -637,17 +662,23 @@ export default function Page() {
                 <select
                   id="max-pages"
                   value={maxPages}
-                  onChange={(e) => setMaxPages(Number(e.target.value))}
+                  onChange={(e) => setMaxPages(e.target.value === 'all' ? 'all' : Number(e.target.value))}
                   disabled={loading}
                   className="bg-slate-900 border border-slate-700 rounded-md px-1.5 py-0.5 text-slate-200"
                 >
-                  {[20, 40, 80, 150].map((n) => (
+                  {[40, 100, 250, 500, 1000].map((n) => (
                     <option key={n} value={n}>
-                      {n}
+                      {n} (sample)
                     </option>
                   ))}
+                  <option value="all">All pages</option>
                 </select>
               </div>
+              {maxPages === 'all' && (
+                <p className="clear-both text-[11px] text-amber-300/80 text-right pt-1">
+                  Crawls every URL in the sitemap. Shopify allows about one catalog page per second, so large stores can take an hour or more. Keep this tab open.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setShowApiKeyInput(!showApiKeyInput)}
@@ -716,6 +747,7 @@ export default function Page() {
                   <div className="space-y-1.5 pt-1">
                     <div className="text-xs text-slate-300 font-mono">
                       {progress.done} / {progress.total} pages crawled
+                      {progress.etaMs ? ` · ~${formatDuration(progress.etaMs)} left` : ''}
                     </div>
                     <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden max-w-xs mx-auto">
                       <div
@@ -858,6 +890,7 @@ export default function Page() {
                           report.crawl.discovered.collections +
                           report.crawl.discovered.pages +
                           report.crawl.discovered.articles +
+                          report.crawl.discovered.blogs +
                           1
                         } discovered URLs (${report.crawl.discovered.products} products, ${report.crawl.discovered.collections} collections)`
                       : 'Real sitemap & catalog URLs'}
@@ -1248,7 +1281,7 @@ export default function Page() {
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                      {canonicalIssues.map((p, i) => (
+                      {canonicalIssues.slice(0, AFFECTED_URLS_SHOWN).map((p, i) => (
                         <div key={i} className="bg-slate-950/60 border border-rose-500/20 rounded-xl p-3 space-y-1">
                           <div className="text-xs font-mono text-rose-300 truncate">{p.url}</div>
                           <div className="text-[11px] text-slate-400">
@@ -1280,7 +1313,10 @@ export default function Page() {
                     {pageTypes.map((t) => (
                       <button
                         key={t}
-                        onClick={() => setPageTableFilter(t)}
+                        onClick={() => {
+                          setPageTableFilter(t);
+                          setPageTableLimit(PAGE_TABLE_STEP);
+                        }}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
                           pageTableFilter === t
                             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -1310,7 +1346,7 @@ export default function Page() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
-                      {filteredPages.map((p, i) => (
+                      {filteredPages.slice(0, pageTableLimit).map((p, i) => (
                         <tr key={i} className="hover:bg-slate-800/20 transition-colors">
                           <td className="py-2.5 px-4 font-mono max-w-[280px]">
                             <a
@@ -1391,6 +1427,27 @@ export default function Page() {
                     </tbody>
                   </table>
                 </div>
+                {filteredPages.length > pageTableLimit && (
+                  <div className="flex items-center justify-center gap-3 text-xs">
+                    <span className="text-slate-500">
+                      Showing {pageTableLimit} of {filteredPages.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPageTableLimit((n) => n + PAGE_TABLE_STEP)}
+                      className="px-3 py-1 rounded-lg border border-slate-700 bg-slate-800/60 hover:border-emerald-500/50 text-slate-300"
+                    >
+                      Show {Math.min(PAGE_TABLE_STEP, filteredPages.length - pageTableLimit)} more
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPageTableLimit(filteredPages.length)}
+                      className="px-3 py-1 rounded-lg border border-slate-700 bg-slate-800/60 hover:border-emerald-500/50 text-slate-300"
+                    >
+                      Show all
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1530,7 +1587,7 @@ export default function Page() {
                                   </div>
 
                                   <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                                    {affectedUrls.map((aff, affIdx) => (
+                                    {affectedUrls.slice(0, AFFECTED_URLS_SHOWN).map((aff, affIdx) => (
                                       <div
                                         key={affIdx}
                                         className="p-2 rounded bg-slate-900/80 border border-slate-800/80 flex items-start justify-between gap-2 text-[11px]"
@@ -1550,6 +1607,11 @@ export default function Page() {
                                         </span>
                                       </div>
                                     ))}
+                                    {affectedUrls.length > AFFECTED_URLS_SHOWN && (
+                                      <div className="text-[11px] text-slate-500 text-center py-1">
+                                        +{affectedUrls.length - AFFECTED_URLS_SHOWN} more — use Copy All URLs or Download JSON for the full list
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               )}
