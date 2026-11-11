@@ -11,9 +11,48 @@ import {
   HARD_MAX_PAGES,
   ALL_PAGES_LIMIT,
 } from './core';
-import type { AuditContext } from './report';
+import type { PageAuditResult } from './core';
+import { detectPlatform, isShopifyPasswordPage } from '../engine/platform';
+import type { PlatformInfo } from '../engine/types';
+
+export interface DiscoverySummary {
+  counts: { products: number; collections: number; pages: number; blogs: number; articles: number };
+  brokenSitemaps: Array<{ url: string; status: number; sitemap: string }>;
+  sitemapFound: boolean;
+}
+
+/** Everything learned from the homepage and sitemaps, plus the pages selected for testing. */
+export interface AuditContext {
+  inputHost: string;
+  baseUrl: string;
+  host: string;
+  storeHandle: string;
+  platform: PlatformInfo;
+  homePage: PageAuditResult;
+  discovery: DiscoverySummary;
+  targets: Array<{ url: string; type: string }>; // excludes the homepage
+  maxPages: number;
+  warnings: string[];
+  startedAt: number;
+}
 
 export type DiscoverResult = { ok: true; ctx: AuditContext } | { ok: false; status: number; message: string };
+
+/** Classifies a user-supplied URL by Shopify path pattern. */
+export function typeForPath(url: string): string {
+  try {
+    const p = new URL(url).pathname.replace(/^\/[a-z]{2}(-[a-z]{2})?(?=\/)/i, '').replace(/\/+$/, '');
+    if (p === '') return 'home';
+    if (/^\/products\/[^/]+$/.test(p) || /^\/collections\/[^/]+\/products\/[^/]+$/.test(p)) return 'product';
+    if (/^\/collections\/[^/]+$/.test(p)) return 'collection';
+    if (/^\/pages\//.test(p)) return 'page';
+    if (/^\/blogs\/[^/]+\/[^/]+$/.test(p)) return 'article';
+    if (/^\/blogs\//.test(p)) return 'blog';
+    return 'other';
+  } catch {
+    return 'other';
+  }
+}
 
 export function normalizeInput(raw: string): { url: URL } | { error: string } {
   let s = String(raw || '').trim();
@@ -40,7 +79,7 @@ export function clampMaxPages(n: any, allowAll = false) {
 export async function discover(parsed: URL, maxPages: number): Promise<DiscoverResult> {
   const startedAt = Date.now();
   const warnings: string[] = [];
-  const inputOrigin = `${parsed.protocol}//${parsed.hostname}`;
+  const inputOrigin = parsed.origin; // keeps a non-default port
 
   const homeStart = Date.now();
   let homeHtml = '';
@@ -48,11 +87,13 @@ export async function discover(parsed: URL, maxPages: number): Promise<DiscoverR
   let homeFinal = inputOrigin + '/';
   let homeRetryAfter: string | null = null;
   let homeError: string | null = null;
+  let homeHeaders: Headers = new Headers();
   try {
     const resp = await fetchWithTimeout(inputOrigin + '/', 15_000);
     homeStatus = resp.status;
     homeFinal = resp.url || homeFinal;
     homeHtml = await resp.text();
+    homeHeaders = resp.headers;
     homeRetryAfter = resp.headers.get('retry-after');
     if (!resp.ok) homeError = `HTTP ${resp.status}`;
   } catch (e) {
@@ -80,8 +121,24 @@ export async function discover(parsed: URL, maxPages: number): Promise<DiscoverR
   }
 
   const finalParsed = new URL(homeFinal);
-  const baseUrl = `${finalParsed.protocol}//${finalParsed.hostname}`;
+  const baseUrl = finalParsed.origin;
   const host = finalParsed.hostname;
+  const platform = detectPlatform(homeHtml, homeHeaders);
+  const shopify = platform.id === 'shopify';
+  if (shopify && isShopifyPasswordPage(homeHtml, homeFinal)) {
+    return {
+      ok: false,
+      status: 403,
+      message: 'This Shopify store is password-protected (storefront password page). Remove the password in Online Store > Preferences, or audit it after launch. A password page cannot be audited meaningfully.',
+    };
+  }
+  if (!shopify) {
+    warnings.push(
+      platform.id === 'unknown'
+        ? 'No Shopify markers were found on the homepage and the platform could not be identified. Shopify-specific checks (catalog feed, theme, policies, cart, Shopify URL rules) were skipped; general web checks still ran.'
+        : `This site runs on ${platform.name} (${platform.evidence[0]}). Shopify-specific checks (catalog feed, theme, policies, cart, Shopify URL rules) were skipped; general web checks still ran.`
+    );
+  }
   if (finalParsed.hostname !== parsed.hostname) {
     warnings.push(`${parsed.hostname} redirects to ${finalParsed.hostname}; the audit used the final domain.`);
   }
@@ -91,7 +148,7 @@ export async function discover(parsed: URL, maxPages: number): Promise<DiscoverR
 
   const homePage = auditHtml(homeHtml, { url: baseUrl, finalUrl: homeFinal, status: homeStatus, latency: homeLatency, type: 'home', host });
 
-  const discovery = await discoverStorePages(baseUrl);
+  const discovery = await discoverStorePages(baseUrl, shopify);
   warnings.push(...discovery.notes);
 
   const pools = {
@@ -112,7 +169,7 @@ export async function discover(parsed: URL, maxPages: number): Promise<DiscoverR
   if (maxPages >= ALL_PAGES_LIMIT && totalDiscovered + 1 > ALL_PAGES_LIMIT) {
     warnings.push(`This store has ${totalDiscovered} URLs; "all pages" mode is capped at ${ALL_PAGES_LIMIT}.`);
   }
-  if (totalDiscovered === 0) warnings.push('No product, collection, page or article URLs could be discovered (sitemap and catalog JSON both empty or blocked).');
+  if (totalDiscovered === 0) warnings.push(shopify ? 'No product, collection, page or article URLs could be discovered (sitemap and catalog JSON both empty or blocked).' : 'No URLs could be discovered from the sitemap, so only the homepage was tested.');
   if (totalDiscovered > targets.length) {
     warnings.push(`Audited a sample of ${targets.length} of ${totalDiscovered} discovered URLs (spread evenly across the catalog). Increase the page limit for more coverage.`);
   }
@@ -124,6 +181,7 @@ export async function discover(parsed: URL, maxPages: number): Promise<DiscoverR
       baseUrl,
       host,
       storeHandle,
+      platform,
       homePage,
       discovery: {
         counts: {

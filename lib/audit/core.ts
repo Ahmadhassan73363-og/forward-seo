@@ -1,4 +1,5 @@
 import { load, type CheerioAPI } from 'cheerio';
+import { guardedFetch } from '../engine/net-guard';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -45,64 +46,8 @@ export interface PageAuditResult {
   images_empty_alt: number;
   dual_urls_found: string[];
   links_count: number;
+  myshopify_links?: number;
   intent_signals?: Record<string, boolean>;
-}
-
-export interface PSIMetrics {
-  strategy: 'mobile' | 'desktop';
-  source: 'google_psi';
-  tested_url: string;
-  performanceScore: number | null;
-  accessibilityScore: number | null;
-  bestPracticesScore: number | null;
-  seoScore: number | null;
-  coreWebVitalsPassed: boolean | null;
-  cwvBasis: 'field' | 'lab';
-  lab: {
-    lcpMs: number | null;
-    lcpDisplay: string;
-    tbtMs: number | null;
-    tbtDisplay: string;
-    cls: number | null;
-    clsDisplay: string;
-    fcpMs: number | null;
-    fcpDisplay: string;
-    speedIndexMs: number | null;
-    speedIndexDisplay: string;
-  };
-  field?: {
-    overallCategory: 'FAST' | 'AVERAGE' | 'SLOW' | 'NO_DATA';
-    lcpMs: number | null;
-    inpMs: number | null;
-    cls: number | null;
-    fcpMs: number | null;
-    ttfbMs: number | null;
-  };
-  opportunities: Array<{ title: string; savingsMs?: number; savingsBytes?: number; description?: string }>;
-}
-
-// Not a discriminated union: tsconfig has strict:false, so narrowing on `ok` doesn't work.
-export type PSIResult = { ok: boolean; data?: PSIMetrics; error?: string };
-
-export interface AffectedUrlItem {
-  url: string;
-  issue: string;
-  statusCode?: number;
-  preview?: string;
-}
-
-export interface DeficitDetail {
-  id: string;
-  title: string;
-  dimension: string;
-  impact: 'Critical' | 'High' | 'Medium' | 'Low';
-  location: string;
-  action_guide: string;
-  code_snippet?: string | null;
-  file_path?: string | null;
-  doc_link?: string | null;
-  admin_link?: string | null;
-  affected_urls: AffectedUrlItem[];
 }
 
 // ─── Config ─────────────────────────────────────────────────────────────────
@@ -146,13 +91,13 @@ export const CRAWLER_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
-export const PSI_TIMEOUT_MS = 50_000;
 export const PAGE_TIMEOUT_MS = 12_000;
 export const CRAWL_DEADLINE_MS = 45_000;
 
 /*
  * Shopify rate-limits storefront *catalog* routes (/products/*, /collections/*, and their
- * .js/.json variants) per client IP. A limited request gets `429 local_rate_limited` with
+ * .js/.json variants) per client IP. The catalog-wide feeds /products.json and /collections.json
+ * were not limited in testing (see lib/engine/catalog-feed.ts). A limited request gets `429 local_rate_limited` with
  * `Retry-After: 60`, served by Shopify's edge (Cloudflare). It is not a bot challenge and
  * the User-Agent makes no difference. Homepage, /pages/*, /blogs/* and sitemaps are not
  * limited the same way.
@@ -173,11 +118,11 @@ export const ALL_PAGES_LIMIT = 25_000;
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
 export async function fetchWithTimeout(url: string, timeoutMs: number, init: RequestInit = {}) {
-  return fetch(url, {
+  // guardedFetch refuses private/local targets and re-checks every redirect hop (SSRF guard).
+  return guardedFetch(url, {
     ...init,
     headers: { ...CRAWLER_HEADERS, ...(init.headers || {}) },
     cache: 'no-store',
-    redirect: 'follow',
     signal: AbortSignal.timeout(timeoutMs),
   });
 }
@@ -236,7 +181,7 @@ export function parseRetryAfterMs(h: string | null, fallbackMs = 60_000): number
 export function isCatalogRoute(url: string): boolean {
   try {
     const p = new URL(url).pathname.replace(/^\/[a-z]{2}(-[a-z]{2})?(?=\/)/i, '');
-    return /^\/(products|collections)(\/|\.json|$)/.test(p);
+    return /^\/(products|collections)(\/|$)/.test(p);
   } catch {
     return false;
   }
@@ -508,6 +453,7 @@ export function auditHtml(
 
   // Links
   let internalLinks = 0;
+  let myshopifyLinks = 0;
   const dual = new Set<string>();
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href') || '';
@@ -516,6 +462,8 @@ export function auditHtml(
       if (u.hostname.replace(/^www\./, '') === host.replace(/^www\./, '')) {
         internalLinks++;
         if (/\/collections\/[^/]+\/products\//.test(u.pathname)) dual.add(u.pathname);
+      } else if (u.hostname.endsWith('.myshopify.com') && !host.endsWith('.myshopify.com')) {
+        myshopifyLinks++;
       }
     } catch {}
   });
@@ -632,6 +580,7 @@ export function auditHtml(
     images_empty_alt: images.emptyAlt,
     dual_urls_found: Array.from(dual).slice(0, 10),
     links_count: internalLinks,
+    myshopify_links: myshopifyLinks,
     intent_signals: intentSignals,
   };
 }
@@ -775,121 +724,6 @@ export async function crawlBatch(
   return { results, remaining: queue, limiter: limiter.state, waitMs: 0 };
 }
 
-// ─── PageSpeed Insights ─────────────────────────────────────────────────────
-
-export async function queryGooglePageSpeed(url: string, strategy: 'mobile' | 'desktop', apiKey?: string): Promise<PSIResult> {
-  const psiKey = apiKey || process.env.PSI_API_KEY;
-  const params = new URLSearchParams({ url, strategy });
-  ['performance', 'accessibility', 'best-practices', 'seo'].forEach((c) => params.append('category', c));
-  if (psiKey) params.set('key', psiKey);
-
-  let psiRes: Response;
-  try {
-    psiRes = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}`, {
-      signal: AbortSignal.timeout(PSI_TIMEOUT_MS),
-      cache: 'no-store',
-    });
-  } catch (e) {
-    const m = errMsg(e);
-    return { ok: false, error: m === 'timeout' ? `Google PSI did not respond within ${PSI_TIMEOUT_MS / 1000}s` : `PSI request failed: ${m}` };
-  }
-
-  if (!psiRes.ok) {
-    let detail = '';
-    try {
-      detail = (await psiRes.json())?.error?.message || '';
-    } catch {}
-    if (psiRes.status === 429) {
-      return { ok: false, error: `Google PSI quota exceeded (HTTP 429)${psiKey ? '' : ' — add a PSI API key to get your own quota'}` };
-    }
-    return { ok: false, error: `Google PSI returned HTTP ${psiRes.status}${detail ? `: ${detail}` : ''}` };
-  }
-
-  const data = await psiRes.json();
-  const lh = data.lighthouseResult;
-  if (!lh) return { ok: false, error: 'Google PSI returned no Lighthouse result' };
-  if (lh.runtimeError?.code) return { ok: false, error: `Lighthouse runtime error: ${lh.runtimeError.message || lh.runtimeError.code}` };
-
-  const audits = lh.audits || {};
-  const cats = lh.categories || {};
-  const fm = data.loadingExperience?.metrics || {};
-  const num = (k: string): number | null => {
-    const v = audits[k]?.numericValue;
-    return typeof v === 'number' ? v : null;
-  };
-  const score = (k: string): number | null => {
-    const v = cats[k]?.score;
-    return typeof v === 'number' ? Math.round(v * 100) : null;
-  };
-
-  const lcp = num('largest-contentful-paint');
-  const tbt = num('total-blocking-time');
-  const cls = num('cumulative-layout-shift');
-  const fcp = num('first-contentful-paint');
-  const si = num('speed-index');
-
-  const fieldLcp = fm.LARGEST_CONTENTFUL_PAINT_MS?.percentile ?? null;
-  const fieldInp = fm.INTERACTION_TO_NEXT_PAINT?.percentile ?? null;
-  const fieldCls = fm.CUMULATIVE_LAYOUT_SHIFT_SCORE?.percentile != null ? fm.CUMULATIVE_LAYOUT_SHIFT_SCORE.percentile / 100 : null;
-  const hasField = fieldLcp !== null;
-
-  let cwvPassed: boolean | null;
-  if (hasField) {
-    cwvPassed = fieldLcp <= 2500 && (fieldInp === null || fieldInp <= 200) && (fieldCls === null || fieldCls <= 0.1);
-  } else if (lcp !== null && tbt !== null && cls !== null) {
-    cwvPassed = lcp <= 2500 && tbt <= 200 && cls <= 0.1;
-  } else cwvPassed = null;
-
-  const opportunities = Object.values(audits)
-    .filter((x: any) => (x.details?.type === 'opportunity' || x.details?.overallSavingsMs) && typeof x.score === 'number' && x.score < 0.9)
-    .sort((a: any, b: any) => (b.details?.overallSavingsMs ?? 0) - (a.details?.overallSavingsMs ?? 0))
-    .slice(0, 6)
-    .map((x: any) => ({
-      title: x.title,
-      savingsMs: Math.round(x.details?.overallSavingsMs ?? 0),
-      savingsBytes: x.details?.overallSavingsBytes,
-      description: x.description,
-    }));
-
-  const disp = (k: string, fallback: string) => audits[k]?.displayValue || fallback;
-
-  return {
-    ok: true,
-    data: {
-      strategy,
-      source: 'google_psi',
-      tested_url: lh.finalDisplayedUrl || lh.finalUrl || url,
-      performanceScore: score('performance'),
-      accessibilityScore: score('accessibility'),
-      bestPracticesScore: score('best-practices'),
-      seoScore: score('seo'),
-      coreWebVitalsPassed: cwvPassed,
-      cwvBasis: hasField ? 'field' : 'lab',
-      lab: {
-        lcpMs: lcp !== null ? Math.round(lcp) : null,
-        lcpDisplay: disp('largest-contentful-paint', '—'),
-        tbtMs: tbt !== null ? Math.round(tbt) : null,
-        tbtDisplay: disp('total-blocking-time', '—'),
-        cls: cls !== null ? Number(cls.toFixed(3)) : null,
-        clsDisplay: disp('cumulative-layout-shift', '—'),
-        fcpMs: fcp !== null ? Math.round(fcp) : null,
-        fcpDisplay: disp('first-contentful-paint', '—'),
-        speedIndexMs: si !== null ? Math.round(si) : null,
-        speedIndexDisplay: disp('speed-index', '—'),
-      },
-      field: {
-        overallCategory: (data.loadingExperience?.overall_category as any) || 'NO_DATA',
-        lcpMs: fieldLcp,
-        inpMs: fieldInp,
-        cls: fieldCls,
-        fcpMs: fm.FIRST_CONTENTFUL_PAINT_MS?.percentile ?? null,
-        ttfbMs: fm.EXPERIMENTAL_TIME_TO_FIRST_BYTE?.percentile ?? null,
-      },
-      opportunities,
-    },
-  };
-}
-
 // ─── Discovery ──────────────────────────────────────────────────────────────
 
 export type Discovery = {
@@ -928,14 +762,41 @@ export function classifyUrl(u: string): keyof Pick<Discovery, 'products' | 'coll
   return null;
 }
 
-export async function discoverStorePages(baseUrl: string): Promise<Discovery> {
+/** Non-Shopify sites: classify by common URL conventions; everything else is a content page. */
+export function classifyGenericUrl(u: string): keyof Pick<Discovery, 'products' | 'collections' | 'pages' | 'blogs' | 'articles'> | null {
+  let p: URL;
+  try {
+    p = new URL(u);
+  } catch {
+    return null;
+  }
+  const path = p.pathname.replace(/\/+$/, '');
+  if (!path || /\.(xml|pdf|jpe?g|png|gif|webp|svg|zip)$/i.test(path)) return null;
+  if (/\/(product|products|item)\/[^/]+$/i.test(path)) return 'products';
+  if (/\/(product-category|category|categories|collections?)\/[^/]+$/i.test(path)) return 'collections';
+  if (/\/(blog|blogs|news|articles?|posts?|insights|stories)\/[^/]+/i.test(path) || /\/\d{4}\/\d{2}\//.test(path)) return 'articles';
+  return 'pages';
+}
+
+export async function discoverStorePages(baseUrl: string, shopify = true): Promise<Discovery> {
   const d: Discovery = { products: [], collections: [], pages: [], blogs: [], articles: [], brokenSitemaps: [], sitemapFound: false, notes: [] };
   const add = (u: string) => {
-    const t = classifyUrl(u);
+    const t = shopify ? classifyUrl(u) : classifyGenericUrl(u);
     if (t) d[t].push(u);
   };
 
-  const indexUrl = `${baseUrl}/sitemap.xml`;
+  // Shopify always serves /sitemap.xml. Other platforms often name their index differently.
+  let indexUrl = `${baseUrl}/sitemap.xml`;
+  if (!shopify) {
+    for (const name of ['sitemap.xml', 'sitemap_index.xml', 'wp-sitemap.xml']) {
+      const r = await fetchWithTimeout(`${baseUrl}/${name}`, 10_000).catch(() => null);
+      const body = r?.ok ? await r.text().catch(() => '') : '';
+      if (/<(urlset|sitemapindex)/i.test(body)) {
+        indexUrl = `${baseUrl}/${name}`;
+        break;
+      }
+    }
+  }
   try {
     const res = await fetchWithTimeout(indexUrl, 10_000);
     if (res.ok) {
@@ -972,9 +833,8 @@ export async function discoverStorePages(baseUrl: string): Promise<Discovery> {
     d.notes.push(`sitemap.xml could not be fetched (${errMsg(e)})`);
   }
 
-  // Catalog JSON hits the same rate-limited routes as product pages, so only use it as a
-  // fallback when the sitemap gave us nothing — otherwise it burns budget we need for crawling.
-  if (d.products.length === 0 || d.collections.length === 0) try {
+  // Shopify-only fallback when the sitemap gave us nothing. (Catalog checks read the full feed separately.)
+  if (shopify && (d.products.length === 0 || d.collections.length === 0)) try {
     const [pResp, cResp] = await Promise.all([
       fetchWithTimeout(`${baseUrl}/products.json?limit=250`, 10_000).catch(() => null),
       fetchWithTimeout(`${baseUrl}/collections.json?limit=250`, 10_000).catch(() => null),
