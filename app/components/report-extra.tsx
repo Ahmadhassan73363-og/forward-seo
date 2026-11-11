@@ -12,7 +12,8 @@ const IMPACT_STYLE: Record<string, string> = {
   minor: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
 };
 
-const shotUrl = (runId: string, f?: string) => (f ? `/api/runs/${runId}/screenshot?f=${encodeURIComponent(f)}` : undefined);
+// Live audits carry screenshots inline as data: URIs; stored runs serve them from the API.
+export const shotUrl = (runId: string, f?: string) => (!f ? undefined : f.startsWith('data:image/') ? f : `/api/runs/${runId}/screenshot?f=${encodeURIComponent(f)}`);
 
 // ─── Browser tests (Phase 3) ────────────────────────────────────────────────
 

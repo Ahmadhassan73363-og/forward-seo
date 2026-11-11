@@ -20,6 +20,8 @@ const CRAWL_MAX_WAIT_MS = Math.max(0, Number(process.env.CRAWL_MAX_WAIT_MS) || 1
 // Pages still blocked at the end may reuse a successful crawl of the same URL from a recent run.
 const CRAWL_CACHE_MAX_AGE_MS = Math.max(0, Number(process.env.CRAWL_CACHE_HOURS ?? 72)) * 3600_000;
 export const MAX_PAGES = 100;
+/** Page cap for live (no-storage) audits, which must finish within one request. */
+export const LIVE_MAX_PAGES = Math.min(MAX_PAGES, Math.max(1, Number(process.env.LIVE_MAX_PAGES) || 30));
 
 type CachedPage = { page: CrawledPage; runId: string; crawledAt: string };
 
@@ -89,6 +91,11 @@ export interface PipelineHooks {
   apiKey?: string;
   owner?: OwnerCredentials;
   isCancelled: () => boolean;
+  /**
+   * Epoch ms after which no new work starts (serverless time limit). Work not started by then is
+   * reported as not run, never as passing, and the report is built from what finished.
+   */
+  deadline?: number;
 }
 
 /** Runs one audit end to end, mutating and periodically persisting `run`. */
@@ -99,6 +106,10 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
     lastSave = Date.now();
     await saveRun(run);
   };
+  const timeUp = () => !!hooks.deadline && Date.now() >= hooks.deadline;
+  const stopping = () => hooks.isCancelled() || timeUp();
+  // Each PageSpeed call may use at most the time left before the deadline (Google needs ~15 s minimum).
+  const psiTimeout = () => (hooks.deadline ? Math.max(15_000, hooks.deadline - Date.now()) : undefined);
   const stage = async (s: string, message?: string) => {
     run.progress.stage = s;
     run.progress.message = message;
@@ -162,16 +173,16 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
     const worker = async () => {
       while (next < run.psiTests.length && !hooks.isCancelled()) {
         const t: PageSpeedTest = run.psiTests[next++];
-        if (quotaBlocked) {
+        if (quotaBlocked || timeUp()) {
           t.status = 'failed';
-          t.error = 'Skipped: PSI quota exhausted';
+          t.error = quotaBlocked ? 'Skipped: PSI quota exhausted' : 'Not run: audit time limit reached';
           run.progress.psiDone++;
           continue;
         }
         t.status = 'running';
-        while (t.attempts < PSI_MAX_ATTEMPTS && !hooks.isCancelled()) {
+        while (t.attempts < PSI_MAX_ATTEMPTS && !stopping()) {
           t.attempts++;
-          const out = await runPageSpeed(t.url, t.strategy, hooks.apiKey);
+          const out = await runPageSpeed(t.url, t.strategy, hooks.apiKey, psiTimeout());
           if (out.ok === true) {
             t.result = out.result;
             if (out.screenshotData && t.strategy === 'mobile') {
@@ -184,10 +195,13 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
           }
           t.error = out.error;
           if (!out.retryable) break;
-          await sleep(out.retryAfterMs ?? 10_000 * t.attempts);
+          const until = Date.now() + (out.retryAfterMs ?? 10_000 * t.attempts);
+          while (Date.now() < until && !stopping()) await sleep(500);
         }
         if (t.status !== 'done') {
           t.status = 'failed';
+          // Cut short by our own time limit, not a failure at Google.
+          if (timeUp() && !hooks.isCancelled()) t.error = 'Not finished: audit time limit reached while Google was still testing';
           // Without a key, the anonymous quota won't recover during this run — stop wasting calls.
           if (!hooks.apiKey && /429/.test(t.error || '')) quotaBlocked = true;
         }
@@ -207,8 +221,8 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
     let queue = [...lead, ...others.filter((t) => !lead.includes(t))];
     let limiter: Partial<LimiterState> | undefined;
     let stalled = 0;
-    while (queue.length && !hooks.isCancelled()) {
-      const batch = await crawlBatch(queue, ctx.host, limiter, Date.now() + 40_000);
+    while (queue.length && !stopping()) {
+      const batch = await crawlBatch(queue, ctx.host, limiter, Math.min(Date.now() + 40_000, hooks.deadline || Infinity));
       limiter = batch.limiter;
       queue = batch.remaining;
       run.crawl.push(...batch.results.map(toCrawled));
@@ -222,11 +236,17 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
         run.progress.message = 'Shopify asked the crawler to pause (HTTP 429 Retry-After); PageSpeed tests continue meanwhile';
         await persist(true);
         const until = Date.now() + batch.waitMs;
-        while (Date.now() < until && !hooks.isCancelled()) await sleep(1000);
+        while (Date.now() < until && !stopping()) await sleep(1000);
         run.progress.waitUntil = undefined;
       }
     }
     if (!queue.length || hooks.isCancelled()) return;
+    if (timeUp()) {
+      run.crawl.push(...queue.map((t) => notCrawledPage(t, 'Not crawled: audit time limit reached')));
+      run.warnings.push(`${queue.length} pages were not crawled because the audit reached its time limit. Audit fewer pages for a complete crawl.`);
+      run.progress.crawlDone = run.crawl.length;
+      return;
+    }
 
     // Still blocked: fall back to a recent run's crawl of the same URL, clearly marked as cached.
     const cache = await recentCrawlCache(ctx.host, run.id).catch(() => new Map<string, CachedPage>());
@@ -258,7 +278,7 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
   // 2e. Whole-catalog checks from /products.json + /collections.json (not affected by the HTML rate limit)
   const catalogTask = async () => {
     if (!shopify || hooks.owner) return; // Shopify only; owner mode reads the same catalog with more fields
-    run.catalog = await fetchCatalogFeed(ctx.baseUrl, hooks.isCancelled).catch((e) => ({ status: 'failed' as const, via: 'feed' as const, message: e?.message || String(e) }));
+    run.catalog = await fetchCatalogFeed(ctx.baseUrl, stopping).catch((e) => ({ status: 'failed' as const, via: 'feed' as const, message: e?.message || String(e) }));
     if (run.catalog.status === 'failed') run.warnings.push(`Catalog feed: ${run.catalog.message}`);
     else if (run.catalog.message) run.warnings.push(`Catalog feed: ${run.catalog.message}`);
     await persist();
@@ -266,7 +286,7 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
 
   // 2b'. Browser tests (Playwright) on a few representative pages, after the crawl
   const browserTask = async () => {
-    if (run.input.browserTests === false || hooks.isCancelled()) return;
+    if (run.input.browserTests === false || stopping()) return;
     const cartFlow = !!run.input.cartFlow && shopify; // the flow uses Shopify's /cart.js and /checkout
     if (run.input.cartFlow && !shopify) run.warnings.push(`Cart flow skipped: it only works on Shopify stores (this site runs on ${ctx.platform.name}).`);
     const okPages = run.crawl.filter((p) => !p.error && !p.cachedFrom); // cached pages are still blocked live
@@ -281,7 +301,7 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
       pages: chosen.map((p) => ({ url: p.url, type: p.type, serverSchemaTypes: p.schemaTypes })),
       cartFlow,
       productUrl,
-      isCancelled: hooks.isCancelled,
+      isCancelled: stopping,
     }).catch((e) => ({ status: 'failed' as const, message: e?.message || String(e), pages: [] }));
     if (run.browser.status !== 'ok' && run.browser.message) run.warnings.push(`Browser tests ${run.browser.status}: ${run.browser.message}`);
     if (cartFlow && !productUrl) run.warnings.push('Cart flow skipped: no product page was available.');
@@ -411,12 +431,17 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
 
 /** Placeholder for a page that stayed rate-limited: listed on the Pages tab, excluded from all checks. */
 function blockedPage(t: { url: string; type: string }): CrawledPage {
+  return { ...notCrawledPage(t, 'HTTP 429 (rate limited)'), status: 429, rateLimited: true };
+}
+
+/** A page that was never fetched: listed with the reason, excluded from all checks. */
+function notCrawledPage(t: { url: string; type: string }, reason: string): CrawledPage {
   return {
     url: t.url,
     type: t.type,
-    status: 429,
-    error: 'HTTP 429 (rate limited)',
-    rateLimited: true,
+    status: 0,
+    error: reason,
+    rateLimited: false,
     responseMs: 0,
     title: '',
     metaDescription: '',

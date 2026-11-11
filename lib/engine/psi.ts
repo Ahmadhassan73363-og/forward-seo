@@ -208,17 +208,17 @@ export function normalizePsi(data: any, url: string, strategy: Strategy): { resu
   };
 }
 
-export async function runPageSpeed(url: string, strategy: Strategy, apiKey: string | undefined): Promise<PsiOutcome> {
+export async function runPageSpeed(url: string, strategy: Strategy, apiKey: string | undefined, timeoutMs = PSI_TIMEOUT_MS): Promise<PsiOutcome> {
   const params = new URLSearchParams({ url, strategy });
   ['performance', 'accessibility', 'best-practices', 'seo'].forEach((c) => params.append('category', c));
   if (apiKey) params.set('key', apiKey);
 
   let res: Response;
   try {
-    res = await fetch(`${PSI_ENDPOINT}?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(PSI_TIMEOUT_MS) });
+    res = await fetch(`${PSI_ENDPOINT}?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(Math.min(timeoutMs, PSI_TIMEOUT_MS)) });
   } catch (e: any) {
     const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
-    return { ok: false, error: timeout ? `PSI timed out after ${PSI_TIMEOUT_MS / 1000}s` : `PSI request failed: ${e?.message}`, retryable: true };
+    return { ok: false, error: timeout ? `PSI timed out after ${Math.round(Math.min(timeoutMs, PSI_TIMEOUT_MS) / 1000)}s` : `PSI request failed: ${e?.message}`, retryable: true };
   }
 
   if (!res.ok) {
@@ -246,7 +246,7 @@ export async function runPageSpeed(url: string, strategy: Strategy, apiKey: stri
     data = await res.json();
   } catch (e: any) {
     const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
-    return { ok: false, error: timeout ? `PSI response timed out after ${PSI_TIMEOUT_MS / 1000}s` : `PSI returned an unreadable response: ${e?.message}`, retryable: true };
+    return { ok: false, error: timeout ? `PSI response timed out after ${Math.round(Math.min(timeoutMs, PSI_TIMEOUT_MS) / 1000)}s` : `PSI returned an unreadable response: ${e?.message}`, retryable: true };
   }
   if (!data?.lighthouseResult) return { ok: false, error: 'PSI returned no Lighthouse result', retryable: true };
   if (data.lighthouseResult.runtimeError?.code) {

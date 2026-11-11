@@ -268,7 +268,7 @@ Adding a rule: append to `FIX_RULES`; no other code changes needed.
 | `ALERT_WEBHOOK_URL` | — | Default Slack/Discord/Teams webhook for regression alerts. |
 | `PUBLIC_BASE_URL` | — | Base URL used for report links inside alerts. |
 
-**Hosting**: the runner does background work after the HTTP response, so it needs a long-running Node process: `npm run build && npm start` on a VPS, Railway, Render, Fly or Docker. On Vercel serverless, background work is killed — host the API/runner elsewhere or move jobs to a queue (QStash/Inngest) + Postgres (phase 5).
+**Hosting**: the runner does background work after the HTTP response, so it needs a long-running Node process: `npm run build && npm start` on a VPS, Railway, Render, Fly or Docker. On Vercel the tool switches to **live mode** automatically: each audit runs inside one streaming request (`POST /api/audit`, up to 300 s) and the report lives only in the browser tab; nothing is stored, and history, comparison, schedules, competitors and browser tests are unavailable. See [DEPLOY_VERCEL.md](DEPLOY_VERCEL.md).
 
 **Cost & time**: PSI and CrUX are free. 20 pages × 2 strategies = 40 PSI calls ≈ 4–6 min at concurrency 4.
 

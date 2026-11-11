@@ -3,6 +3,7 @@ import { isSafeWebhook } from '@/lib/engine/compare';
 import { checkPublicUrl, parseStoreUrl } from '@/lib/engine/net-guard';
 import { MAX_PAGES } from '@/lib/engine/pipeline';
 import { ensureRecovered } from '@/lib/engine/runner';
+import { EPHEMERAL } from '@/lib/engine/store';
 import { loadSchedules, newScheduleId, nextRunAt, updateSchedules } from '@/lib/engine/schedules';
 import type { Schedule, Strategy } from '@/lib/engine/types';
 
@@ -18,6 +19,7 @@ export async function GET() {
 
 /** Body: { url, frequency: 'daily'|'weekly', pages?, strategies?, browserTests?, webhookUrl? } */
 export async function POST(req: Request) {
+  if (EPHEMERAL) return NextResponse.json({ error: 'Scheduled audits need a server with storage. This deployment keeps no audits.' }, { status: 409 });
   await ensureRecovered();
   const body = await req.json().catch(() => ({}));
   const url = String(body.url || '').trim();

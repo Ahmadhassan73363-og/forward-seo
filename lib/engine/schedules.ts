@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type { Schedule } from './types';
+import { EPHEMERAL } from './store';
 
 /* Scheduled audits, stored in DATA_DIR/schedules.json. The scheduler loop lives in runner.ts. */
 
@@ -20,6 +21,7 @@ export async function loadSchedules(): Promise<Schedule[]> {
 }
 
 async function saveSchedules(list: Schedule[]) {
+  if (EPHEMERAL) throw new Error('Scheduled audits need a server with storage; this deployment keeps nothing.');
   await fs.mkdir(DATA_DIR, { recursive: true });
   const tmp = `${FILE}.${process.pid}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(list, null, 2));

@@ -2,7 +2,7 @@ import { compareRuns, findPreviousRun, sendAlert } from './compare';
 import { executeRun } from './pipeline';
 import { isDue, loadSchedules, updateSchedules } from './schedules';
 import type { OwnerCredentials } from './shopify-admin';
-import { listRuns, loadRun, newRunId, saveRun } from './store';
+import { EPHEMERAL, listRuns, loadRun, newRunId, saveRun } from './store';
 import type { Run, RunInput } from './types';
 
 /*
@@ -95,7 +95,7 @@ function pump() {
 }
 
 /** Server-level owner credentials apply only to primary runs; the pipeline verifies the shop matches. */
-function ownerCredsFor(run: Run, secrets?: RunSecrets): OwnerCredentials | undefined {
+export function ownerCredsFor(run: Run, secrets?: RunSecrets): OwnerCredentials | undefined {
   if (secrets?.owner) return secrets.owner;
   if (run.input.role === 'competitor') return undefined;
   const shop = process.env.SHOPIFY_SHOP;
@@ -144,10 +144,10 @@ async function processRun(id: string) {
   await saveRun(run);
 }
 
-export async function createRun(input: RunInput, secrets?: RunSecrets): Promise<Run> {
-  await recover();
+/** A fresh run document (not yet stored or queued). */
+export function newRun(input: RunInput, hasRunSecrets = false): Run {
   const now = new Date().toISOString();
-  const run: Run = {
+  return {
     id: newRunId(),
     createdAt: now,
     updatedAt: now,
@@ -160,8 +160,14 @@ export async function createRun(input: RunInput, secrets?: RunSecrets): Promise<
     apps: [],
     findings: [],
     warnings: [],
-    hasRunSecrets: !!(secrets && (secrets.apiKey || secrets.owner)),
+    hasRunSecrets,
   };
+}
+
+export async function createRun(input: RunInput, secrets?: RunSecrets): Promise<Run> {
+  if (EPHEMERAL) throw new Error('This deployment keeps no stored audits; audits run live through /api/audit.');
+  await recover();
+  const run = newRun(input, !!(secrets && (secrets.apiKey || secrets.owner)));
   await saveRun(run);
   if (secrets && (secrets.apiKey || secrets.owner)) state.secrets.set(run.id, secrets);
   state.queue.push(run.id);
@@ -212,7 +218,8 @@ async function schedulerTick() {
 }
 
 export function startScheduler() {
-  if (state.schedulerStarted) return;
+  if (state.schedulerStarted || EPHEMERAL) return; // no background loop without a long-running server
+
   state.schedulerStarted = true;
   recover().catch(() => {});
   setInterval(() => schedulerTick().catch((e) => console.error('[scheduler]', e)), SCHEDULER_TICK_MS);
@@ -230,5 +237,7 @@ export function serverConfig() {
     ownerConfigured: !!(process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_TOKEN),
     ownerShop: process.env.SHOPIFY_SHOP || null,
     alertWebhook: !!process.env.ALERT_WEBHOOK_URL,
+    // No-storage mode: audits stream live, nothing is kept, no schedules or competitor runs.
+    ephemeral: EPHEMERAL,
   };
 }

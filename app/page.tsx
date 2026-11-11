@@ -7,6 +7,8 @@ import type { RunSummary } from '@/lib/engine/types';
 import Schedules from './components/schedules';
 import { Card, scoreColor } from './components/ui';
 
+const LIVE_KEY = 'liveAuditRequest'; // same key as app/live/page.tsx
+
 const STATUS_STYLE: Record<string, string> = {
   queued: 'text-slate-300 bg-slate-500/15',
   running: 'text-sky-300 bg-sky-500/15',
@@ -26,7 +28,8 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [serverKey, setServerKey] = useState<boolean | null>(null);
-  const [caps, setCaps] = useState<{ browserAvailable: boolean; ownerConfigured: boolean; ownerShop: string | null; alertWebhook: boolean } | null>(null);
+  const [caps, setCaps] = useState<{ browserAvailable: boolean; ownerConfigured: boolean; ownerShop: string | null; alertWebhook: boolean; ephemeral: boolean } | null>(null);
+  const ephemeral = !!caps?.ephemeral;
   const [browserTests, setBrowserTests] = useState(true);
   const [cartFlow, setCartFlow] = useState(false);
   const [competitors, setCompetitors] = useState('');
@@ -43,7 +46,8 @@ export default function Home() {
         setRuns(d.runs || []);
         setServerKey(!!d.serverKey);
         setMaxPages(d.maxPages || 100);
-        setCaps({ browserAvailable: !!d.browserAvailable, ownerConfigured: !!d.ownerConfigured, ownerShop: d.ownerShop, alertWebhook: !!d.alertWebhook });
+        if (d.ephemeral) setPages((p) => Math.min(p, 10)); // a live audit must finish within one request
+        setCaps({ browserAvailable: !!d.browserAvailable, ownerConfigured: !!d.ownerConfigured, ownerShop: d.ownerShop, alertWebhook: !!d.alertWebhook, ephemeral: !!d.ephemeral });
       })
       .catch(() => setServerKey(false));
   }, []);
@@ -54,10 +58,7 @@ export default function Home() {
     setSubmitting(true);
     setError(null);
     const strategies = [mobile && 'mobile', desktop && 'desktop'].filter(Boolean);
-    const res = await fetch('/api/runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const request = JSON.stringify({
         url: url.trim(),
         pages,
         strategies,
@@ -71,12 +72,29 @@ export default function Home() {
           .split(/\s+/)
           .map((s) => s.trim())
           .filter(Boolean),
-      }),
-    }).catch(() => null);
+    });
+    if (ephemeral) {
+      // No storage on this deployment: the audit streams into the /live tab and is never saved.
+      try {
+        sessionStorage.setItem(LIVE_KEY, request);
+      } catch {
+        setSubmitting(false);
+        setError('Your browser blocked session storage, which live audits need. Allow site data for this page and try again.');
+        return;
+      }
+      router.push('/live');
+      return;
+    }
+    const res = await fetch('/api/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: request }).catch(() => null);
     const data = await res?.json().catch(() => ({}));
     setSubmitting(false);
     if (!res?.ok || !data?.id) {
-      setError(data?.error || 'Could not start the audit.');
+      setError(
+        data?.error ||
+          (res
+            ? `Could not start the audit: the server answered HTTP ${res.status} without an explanation. Check the server logs (on Vercel: Project → Logs).`
+            : 'Could not start the audit: the server could not be reached.')
+      );
       return;
     }
     router.push(`/runs/${data.id}`);
@@ -134,7 +152,7 @@ export default function Home() {
               <label className="flex items-center gap-2">
                 Pages to test
                 <select value={pages} onChange={(e) => setPages(Number(e.target.value))} className="bg-slate-950 border border-slate-700 rounded px-2 py-1">
-                  {[5, 10, 20, 40, 60, maxPages].filter((v, i, a) => a.indexOf(v) === i).map((n) => (
+                  {[5, 10, 20, 40, 60, maxPages].filter((v, i, a) => v <= maxPages && a.indexOf(v) === i).map((n) => (
                     <option key={n} value={n}>
                       {n}
                     </option>
@@ -148,7 +166,7 @@ export default function Home() {
                 <input type="checkbox" checked={desktop} onChange={(e) => setDesktop(e.target.checked)} /> Desktop
               </label>
               <span className="text-slate-500">
-                {psiCalls} PageSpeed tests · ~{Math.max(1, Math.round((psiCalls * 25) / 4 / 60))} min
+                {psiCalls} PageSpeed tests · ~{Math.max(1, Math.round((psiCalls * 25) / (ephemeral ? 8 : 4) / 60))} min
               </span>
               <label className="flex items-center gap-1.5" title={caps && !caps.browserAvailable ? 'No Chrome/Edge found on the server' : ''}>
                 <input type="checkbox" checked={browserTests} onChange={(e) => setBrowserTests(e.target.checked)} disabled={caps ? !caps.browserAvailable : false} /> Browser tests
@@ -180,7 +198,7 @@ export default function Home() {
                   />
                   <span className="text-[11px] text-slate-500">Used for this run only; kept in server memory, never saved to disk.</span>
                 </label>
-                {showAdvanced && (
+                {showAdvanced && !ephemeral && (
                   <label className="flex items-start gap-2 text-xs text-slate-300">
                     <input type="checkbox" className="mt-0.5" checked={cartFlow} onChange={(e) => setCartFlow(e.target.checked)} disabled={!browserTests} />
                     <span>
@@ -189,7 +207,7 @@ export default function Home() {
                     </span>
                   </label>
                 )}
-                {showAdvanced && (
+                {showAdvanced && !ephemeral && (
                   <label className="block text-xs space-y-1">
                     <span className="text-slate-300 inline-flex items-center gap-1">
                       <Users className="w-3.5 h-3.5" /> Competitors to benchmark (optional, up to 5, one per line)
@@ -228,12 +246,19 @@ export default function Home() {
                 )}
               </div>
             )}
+            {ephemeral && (
+              <p className="text-[11px] text-slate-400 bg-slate-800/40 border border-slate-700/60 rounded-lg px-3 py-2">
+                Live mode: the audit runs while its tab is open and the report is not saved. Up to {maxPages} pages; large audits may hit the host&apos;s time limit, and
+                anything not finished is shown as “Not run”. Browser tests, cart flow, competitors and schedules need a server with storage.
+              </p>
+            )}
             {error && <p className="text-xs text-rose-300">{error}</p>}
           </form>
         </Card>
 
-        <Schedules alertWebhookConfigured={!!caps?.alertWebhook} />
+        {!ephemeral && <Schedules alertWebhookConfigured={!!caps?.alertWebhook} />}
 
+        {!ephemeral && (
         <section className="space-y-3">
           <h2 className="text-sm font-bold text-slate-300 flex items-center gap-2">
             <Gauge className="w-4 h-4 text-emerald-400" /> Recent audits
@@ -288,6 +313,7 @@ export default function Home() {
             </div>
           )}
         </section>
+        )}
       </main>
     </div>
   );

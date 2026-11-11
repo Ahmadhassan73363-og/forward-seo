@@ -10,6 +10,12 @@ import type { Run, RunSummary } from './types';
  * Good for a single long-running server. Swap for Postgres by reimplementing these functions.
  */
 
+/**
+ * No-storage mode (automatic on Vercel, or STORAGE=none): nothing is written to disk. Each audit runs
+ * inside one streaming request and its report exists only in the browser tab that started it.
+ */
+export const EPHEMERAL = process.env.STORAGE === 'none' || (process.env.VERCEL === '1' && process.env.STORAGE !== 'disk');
+
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), '.data'));
 const RUNS_DIR = path.join(DATA_DIR, 'runs');
 const ID_RE = /^[a-z0-9-]{8,64}$/;
@@ -36,10 +42,12 @@ async function writeAtomic(file: string, data: string | Buffer) {
 
 export async function saveRun(run: Run) {
   run.updatedAt = new Date().toISOString();
+  if (EPHEMERAL) return;
   await writeAtomic(path.join(runDir(run.id), 'run.json'), JSON.stringify(run));
 }
 
 export async function loadRun(id: string): Promise<Run | null> {
+  if (EPHEMERAL) return null;
   try {
     return JSON.parse(await fs.readFile(path.join(runDir(id), 'run.json'), 'utf8'));
   } catch {
@@ -48,6 +56,7 @@ export async function loadRun(id: string): Promise<Run | null> {
 }
 
 export async function listRuns(limit = 50): Promise<RunSummary[]> {
+  if (EPHEMERAL) return [];
   let ids: string[] = [];
   try {
     ids = (await fs.readdir(RUNS_DIR)).filter((x) => ID_RE.test(x));
@@ -78,19 +87,21 @@ export async function listRuns(limit = 50): Promise<RunSummary[]> {
 }
 
 export async function deleteRun(id: string) {
+  if (EPHEMERAL) return;
   await fs.rm(runDir(id), { recursive: true, force: true });
 }
 
 export async function saveScreenshot(id: string, key: string, dataUri: string): Promise<string | undefined> {
   const m = dataUri.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/);
   if (!m || !/^[a-z0-9-]+$/.test(key)) return undefined;
+  if (EPHEMERAL) return dataUri; // kept inline in the report sent to the browser
   const ext = m[1] === 'jpg' ? 'jpeg' : m[1];
   await writeAtomic(path.join(runDir(id), 'shots', `${key}.${ext}`), Buffer.from(m[2], 'base64'));
   return `${key}.${ext}`;
 }
 
 export async function readScreenshot(id: string, file: string): Promise<{ data: Buffer; type: string } | null> {
-  if (!/^[a-z0-9-]+\.(jpeg|png|webp)$/.test(file)) return null;
+  if (EPHEMERAL || !/^[a-z0-9-]+\.(jpeg|png|webp)$/.test(file)) return null;
   try {
     const data = await fs.readFile(path.join(runDir(id), 'shots', file));
     return { data, type: `image/${file.split('.').pop()}` };
