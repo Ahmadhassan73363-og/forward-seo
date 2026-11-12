@@ -1,5 +1,7 @@
 import { load, type CheerioAPI } from 'cheerio';
 import { guardedFetch } from '../engine/net-guard';
+import { scanSchema } from '../engine/schema/extract';
+import type { PageSchema } from '../engine/schema/types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,8 @@ export interface PageAuditResult {
   schema_score: number;
   schema_types: string[];
   schema_findings: string[];
+  /** Every schema.org item on the page (JSON-LD, Microdata, RDFa), validated */
+  schema_scan?: PageSchema;
   script_count: number;
   third_party_scripts: number;
   render_blocking_scripts: number;
@@ -571,6 +575,7 @@ export function auditHtml(
     schema_score: Math.max(0, Math.min(100, schemaScore)),
     schema_types: schemaTypes,
     schema_findings: findings,
+    schema_scan: safeScan($),
     script_count: scripts.total,
     third_party_scripts: scripts.thirdParty,
     render_blocking_scripts: scripts.renderBlocking,
@@ -583,6 +588,15 @@ export function auditHtml(
     myshopify_links: myshopifyLinks,
     intent_signals: intentSignals,
   };
+}
+
+/** The schema scan never fails the page audit. */
+function safeScan($: CheerioAPI): PageSchema | undefined {
+  try {
+    return scanSchema($);
+  } catch {
+    return undefined;
+  }
 }
 
 export function failedPage(

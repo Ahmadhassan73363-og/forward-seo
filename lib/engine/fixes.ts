@@ -468,6 +468,20 @@ export const FIX_RULES: FixRule[] = [
     adminPath: 'themes',
   },
   {
+    id: 'schema-value-errors',
+    title: 'Structured data values Google rejects',
+    module: 'structured_data',
+    checks: ['schema_value_errors'],
+    summary: 'Markup that parses but breaks Google’s rules (wrong formats, missing required properties) is ignored for rich results.',
+    steps: [
+      'Open the Schema tab: every error lists the item, the property path and what is wrong.',
+      'Typical fixes: prices as plain numbers (29.99, no symbol), 3-letter currency codes, schema.org availability URLs, ISO 8601 dates, full https:// URLs, and no rating with 0 reviews.',
+      'Re-test the page with the “Test a URL” box on the Schema tab or Google’s Rich Results Test.',
+    ],
+    docs: 'https://search.google.com/test/rich-results',
+    adminPath: 'themes',
+  },
+  {
     id: 'duplicate-schema',
     title: 'Multiple Product schemas on one page',
     module: 'structured_data',

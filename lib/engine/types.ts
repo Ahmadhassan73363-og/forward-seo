@@ -1,5 +1,6 @@
 // Shared, dependency-free types for the audit engine. Imported by both server and browser code.
 import type { AiInput, Ga4Data, MerchantData, AiVisibilityData, AiOverviewsData, OtterlyData } from './integration-types';
+import type { PageSchema } from './schema/types';
 export * from './integration-types';
 
 export type Strategy = 'mobile' | 'desktop';
@@ -304,6 +305,8 @@ export interface CrawledPage {
   schemaTypes: string[];
   schemaFindings: string[];
   invalidJsonLd: number;
+  /** Full structured data scan (absent on pages crawled before this existed) */
+  schema?: PageSchema;
   hasFaq: boolean;
   definitionWords: number;
   totalImages: number;

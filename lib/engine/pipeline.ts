@@ -73,6 +73,7 @@ export function toCrawled(p: PageAuditResult): CrawledPage {
     schemaTypes: p.schema_types,
     schemaFindings: p.schema_findings,
     invalidJsonLd: p.invalid_json_ld_blocks,
+    schema: p.schema_scan,
     hasFaq: p.has_faq_content,
     definitionWords: p.definition_word_count,
     totalImages: p.total_images,

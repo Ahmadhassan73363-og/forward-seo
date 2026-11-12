@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Bot, ChevronDown, ChevronRight, Cpu, Download, ExternalLink, FileText, Gauge, Layers, ListChecks, MousePointerClick, Printer, RefreshCw, ShieldCheck, Smartphone, Monitor, Store, TrendingDown, TrendingUp, Users, X, LayoutDashboard } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronDown, ChevronRight, Cpu, Download, ExternalLink, FileText, Gauge, Layers, ListChecks, MousePointerClick, Printer, RefreshCw, ShieldCheck, Smartphone, Monitor, Store, TrendingDown, TrendingUp, Users, X, LayoutDashboard, Braces } from 'lucide-react';
 import { BrowserTab, CatalogTab, shotUrl } from './report-extra';
 import { AhrefsTab, ahrefsTabLabel } from './ahrefs';
 import { SemrushTab } from './semrush';
@@ -32,10 +32,11 @@ import { Ga4Tab } from './ga4';
 import { MerchantTab } from './merchant';
 import { AiSearchTab } from './ai-search';
 import { ScreamingFrogTab } from './screaming-frog';
+import { SchemaTab } from './schema';
 import { MODULES, type Finding, type ModuleId, type PageSpeedTest, type Run, type Severity, type Strategy } from '@/lib/engine/types';
 import { Card, CopyButton, ScoreRing, SeverityBadge, cwvClass, fmtBytes, fmtMs, scoreBg, scoreColor, shortUrl } from './ui';
 
-type Tab = 'overview' | 'issues' | 'pages' | 'apps' | 'browser' | 'catalog' | 'site' | 'search' | 'semrush' | 'gsc' | 'dashboard' | 'ga4' | 'merchant' | 'ai' | 'sf';
+type Tab = 'overview' | 'issues' | 'pages' | 'apps' | 'browser' | 'catalog' | 'site' | 'search' | 'semrush' | 'gsc' | 'dashboard' | 'ga4' | 'merchant' | 'ai' | 'sf' | 'schema';
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const moduleLabel = (id: ModuleId) => MODULES.find((m) => m.id === id)?.label || id;
 
@@ -140,6 +141,7 @@ export function RunReport({ run, onCancel, live }: { run: Run; onCancel?: () => 
                 ['dashboard', 'SEO & AI dashboard', LayoutDashboard],
                 ['issues', `Issues (${run.findings.length})`, ListChecks],
                 ['pages', `Pages (${run.targets.length})`, Layers],
+                ['schema', 'Schema', Braces],
                 ['apps', `Apps (${run.apps.length})`, Cpu],
                 ...(run.browser ? [['browser', 'Browser tests', MousePointerClick]] : []),
                 ...(run.owner || run.catalog ? [['catalog', 'Catalog', Store]] : []),
@@ -180,6 +182,7 @@ export function RunReport({ run, onCancel, live }: { run: Run; onCancel?: () => 
           {tab === 'merchant' && run.merchant && <MerchantTab run={run} />}
           {tab === 'ai' && (run.aiVisibility || run.aiOverviews || run.otterly) && <AiSearchTab run={run} />}
           {tab === 'sf' && <ScreamingFrogTab />}
+          {tab === 'schema' && <SchemaTab run={run} />}
         </>
       )}
     </>
