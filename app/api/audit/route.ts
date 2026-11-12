@@ -1,3 +1,4 @@
+import { parseAiInput } from '@/lib/engine/brand';
 import { LIVE_MAX_PAGES, executeRun } from '@/lib/engine/pipeline';
 import { newRun, ownerCredsFor } from '@/lib/engine/runner';
 import { takeRunBudget, vetUrl } from '@/lib/engine/request-guard';
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
   if (limited) return json({ error: limited }, 429);
 
   const run = newRun(
-    { url: vetted.url, pages, strategies: strategies.length ? strategies : ['mobile'], customUrls: customUrls?.length ? customUrls : undefined, browserTests: body.browserTests !== false, cartFlow: !!body.cartFlow, role: 'primary' },
+    { url: vetted.url, pages, strategies: strategies.length ? strategies : ['mobile'], customUrls: customUrls?.length ? customUrls : undefined, browserTests: body.browserTests !== false, cartFlow: !!body.cartFlow, role: 'primary', ai: parseAiInput(body.ai) },
     !!(apiKey || owner)
   );
   if (Array.isArray(body.competitors) && body.competitors.length) run.warnings.push('Competitor benchmarks need stored audits and are not available on this deployment.');

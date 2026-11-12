@@ -1,12 +1,14 @@
 /* Low-level Ahrefs API v3 request (https://docs.ahrefs.com/en/api). */
 
-const API = 'https://api.ahrefs.com/v3';
+import { apiBase } from '../mock-apis';
+
+const API = () => apiBase('https://api.ahrefs.com/v3', 'ahrefs/v3');
 const TIMEOUT_MS = 25_000;
 
 export type AhrefsResponse = { ok: true; data: any } | { ok: false; status: number; message: string };
 
 export async function ahrefsGet(path: string, params: Record<string, string>, key: string): Promise<AhrefsResponse> {
-  const url = `${API}${path}?${new URLSearchParams({ output: 'json', ...params })}`;
+  const url = `${API()}${path}?${new URLSearchParams({ output: 'json', ...params })}`;
   let res: Response;
   try {
     res = await fetch(url, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) });

@@ -23,7 +23,7 @@ app/components/ahrefs/
   index.tsx          the tab; picks its sections by the plan the audit ran with
   domain-rating.tsx  free section
   site-explorer.tsx  paid section
-  shared.tsx         stat card and number formatting
+app/components/shared/stat.tsx   stat card and number formatting (shared with Semrush)
 ```
 
 The pipeline calls `fetchAhrefs` in parallel with the other checks (`lib/engine/pipeline.ts`, "2f"). The result is stored as `run.ahrefs`, together with the plan it ran with.

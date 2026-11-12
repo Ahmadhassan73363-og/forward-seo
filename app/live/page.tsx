@@ -108,22 +108,22 @@ export default function LivePage() {
   return (
     <Shell live>
       {idle ? (
-        <Card className="text-center text-slate-300 space-y-2">
+        <Card className="text-center text-neutral-700 space-y-2">
           <p>No audit is running in this tab. Reports aren&apos;t saved, so a finished report disappears when the page is closed or reloaded.</p>
-          <Link href="/" className="text-emerald-400 hover:underline text-sm">
+          <Link href="/" className="text-brand hover:underline text-sm">
             Start an audit
           </Link>
         </Card>
       ) : (
         <>
-          {error && <Card className="border-rose-500/40 bg-rose-500/5 text-sm text-rose-200">{error}</Card>}
+          {error && <Card className="border-rose-500/40 bg-rose-500/5 text-sm text-rose-800">{error}</Card>}
           {run ? (
             <RunReport run={run} live onCancel={() => ctrl.current?.abort()} />
           ) : (
-            !error && <Card className="text-center text-slate-400">Starting the audit…</Card>
+            !error && <Card className="text-center text-neutral-600">Starting the audit…</Card>
           )}
           {run?.status === 'completed' && (
-            <p className="text-[11px] text-slate-500 text-center">This report isn&apos;t saved. Use JSON or Print / PDF above to keep a copy before closing the tab.</p>
+            <p className="text-[11px] text-neutral-500 text-center">This report isn&apos;t saved. Use JSON or Print / PDF above to keep a copy before closing the tab.</p>
           )}
         </>
       )}

@@ -16,6 +16,11 @@ Under **Vercel → Project → Settings → Environment Variables**:
 | `APP_USER` | Optional sign-in name. |
 | `PSI_API_KEY` | Google key with the PageSpeed Insights API and Chrome UX Report API enabled. |
 | `AHREFS_FREE_API_KEY` or `AHREFS_PAID_API_KEY` | Optional. Adds Ahrefs data to the report ([AHREFS.md](AHREFS.md)). |
+| `SEMRUSH_API_KEY` | Optional. Adds a Semrush tab ([SEMRUSH.md](SEMRUSH.md)). |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Optional. The service account's JSON key. Adds Search Console, plus GA4 and Merchant Center when `GA4_ENABLED` / `MERCHANT_ENABLED` are set ([SEO_AI_INTEGRATIONS.md](SEO_AI_INTEGRATIONS.md)). |
+| `OPENAI_API_KEY`, `PERPLEXITY_API_KEY`, `GEMINI_API_KEY` | Optional. AI visibility checks. On Vercel keep `AI_PROBE_MAX_PROMPTS` small (default 8) so they finish within the time limit. |
+| `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` | Optional. Google AI Overviews. |
+| `OTTERLY_API_KEY` | Optional. Otterly.AI brand report. |
 | `AUDIT_TIME_BUDGET_SECONDS` | Optional, default 230. Must stay below the function limit. |
 | `LIVE_MAX_PAGES` | Optional, default 30. |
 

@@ -65,10 +65,10 @@ export default function Schedules({ alertWebhookConfigured }: { alertWebhookConf
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-slate-300 flex items-center gap-2">
-          <CalendarClock className="w-4 h-4 text-emerald-400" /> Scheduled monitoring
+        <h2 className="text-sm font-semibold text-neutral-900 text-neutral-700 flex items-center gap-2">
+          <CalendarClock className="w-4 h-4 text-brand" /> Scheduled monitoring
         </h2>
-        <button onClick={() => setOpen(!open)} className="text-xs text-emerald-400 hover:underline">
+        <button onClick={() => setOpen(!open)} className="text-xs text-brand hover:underline">
           {open ? 'Close' : '+ New schedule'}
         </button>
       </div>
@@ -76,19 +76,19 @@ export default function Schedules({ alertWebhookConfigured }: { alertWebhookConf
         <Card>
           <form onSubmit={create} className="grid sm:grid-cols-6 gap-2 text-xs items-end">
             <label className="sm:col-span-2 space-y-1">
-              <span className="text-slate-400">Store URL</span>
-              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="your-store.com" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2" />
+              <span className="text-neutral-600">Store URL</span>
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="your-store.com" className="w-full bg-white/70 border border-neutral-300 rounded-lg px-3 py-2" />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Every</span>
-              <select value={frequency} onChange={(e) => setFrequency(e.target.value as any)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2">
+              <span className="text-neutral-600">Every</span>
+              <select value={frequency} onChange={(e) => setFrequency(e.target.value as any)} className="w-full bg-white/70 border border-neutral-300 rounded-lg px-2 py-2">
                 <option value="daily">Day</option>
                 <option value="weekly">Week</option>
               </select>
             </label>
             <label className="space-y-1">
-              <span className="text-slate-400">Pages</span>
-              <select value={pages} onChange={(e) => setPages(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2">
+              <span className="text-neutral-600">Pages</span>
+              <select value={pages} onChange={(e) => setPages(Number(e.target.value))} className="w-full bg-white/70 border border-neutral-300 rounded-lg px-2 py-2">
                 {[5, 10, 20, 40].map((n) => (
                   <option key={n} value={n}>
                     {n}
@@ -97,28 +97,28 @@ export default function Schedules({ alertWebhookConfigured }: { alertWebhookConf
               </select>
             </label>
             <label className="sm:col-span-2 space-y-1">
-              <span className="text-slate-400">Alert webhook (Slack/Discord/Teams, optional)</span>
-              <input value={webhook} onChange={(e) => setWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 font-mono" />
+              <span className="text-neutral-600">Alert webhook (Slack/Discord/Teams, optional)</span>
+              <input value={webhook} onChange={(e) => setWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/…" className="w-full bg-white/70 border border-neutral-300 rounded-lg px-3 py-2 font-mono" />
             </label>
             <div className="sm:col-span-6 flex items-center gap-3">
-              <button type="submit" disabled={!url.trim()} className="bg-emerald-500 text-slate-950 font-bold px-4 py-2 rounded-lg disabled:opacity-50">
+              <button type="submit" disabled={!url.trim()} className="bg-brand text-white hover:bg-brand-700 font-bold px-4 py-2 rounded-lg disabled:opacity-50">
                 Create schedule
               </button>
-              <span className="text-[11px] text-slate-500">
+              <span className="text-[11px] text-neutral-500">
                 The first audit starts within a minute of creating the schedule, then repeats every {frequency === 'daily' ? 'day' : 'week'}. Runs mobile PageSpeed + browser tests and compares with the previous run. Alerts fire when the score drops 5+, mobile performance drops 10+, or new high/critical issues appear
                 {alertWebhookConfigured ? ' (server default webhook is set)' : ''}.
               </span>
             </div>
-            {error && <p className="sm:col-span-6 text-rose-300">{error}</p>}
+            {error && <p className="sm:col-span-6 text-rose-700">{error}</p>}
           </form>
         </Card>
       )}
       {list.length === 0 ? (
-        <p className="text-xs text-slate-500">No scheduled audits.</p>
+        <p className="text-xs text-neutral-500">No scheduled audits.</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-800">
+        <div className="overflow-x-auto rounded-md border border-neutral-200">
           <table className="w-full text-xs">
-            <thead className="bg-slate-900 text-slate-400 uppercase text-[10px]">
+            <thead className="bg-white/60 text-neutral-600 uppercase text-[10px]">
               <tr>
                 <th className="text-left px-4 py-2">Store</th>
                 <th className="text-left px-4 py-2">Every</th>
@@ -128,27 +128,27 @@ export default function Schedules({ alertWebhookConfigured }: { alertWebhookConf
                 <th className="px-4 py-2" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody className="divide-y divide-neutral-200/70">
               {list.map((s) => (
                 <tr key={s.id}>
                   <td className="px-4 py-2 font-mono">{s.url}</td>
                   <td className="px-4 py-2">{s.frequency === 'daily' ? 'day' : 'week'} · {s.pages} pages</td>
-                  <td className="px-4 py-2 text-slate-400">
+                  <td className="px-4 py-2 text-neutral-600">
                     {s.lastRunId ? (
-                      <Link href={`/runs/${s.lastRunId}`} className="hover:text-emerald-400">
+                      <Link href={`/runs/${s.lastRunId}`} className="hover:text-brand">
                         {new Date(s.lastRunAt!).toLocaleString()}
                       </Link>
                     ) : (
                       '—'
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-400">{s.enabled ? (s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : '—') : 'paused'}</td>
-                  <td className="px-4 py-2 text-slate-400">{s.webhookUrl || (alertWebhookConfigured ? 'server default' : 'none')}</td>
+                  <td className="px-4 py-2 text-neutral-600">{s.enabled ? (s.nextRunAt ? new Date(s.nextRunAt).toLocaleString() : '—') : 'paused'}</td>
+                  <td className="px-4 py-2 text-neutral-600">{s.webhookUrl || (alertWebhookConfigured ? 'server default' : 'none')}</td>
                   <td className="px-4 py-2 text-right whitespace-nowrap">
-                    <button onClick={() => toggle(s)} className="text-[11px] px-2 py-0.5 rounded border border-slate-700 mr-2">
+                    <button onClick={() => toggle(s)} className="text-[11px] px-2 py-0.5 rounded border border-neutral-300 mr-2">
                       {s.enabled ? 'Pause' : 'Resume'}
                     </button>
-                    <button onClick={() => remove(s)} aria-label="Delete schedule" className="text-slate-500 hover:text-rose-400 align-middle">
+                    <button onClick={() => remove(s)} aria-label="Delete schedule" className="text-neutral-500 hover:text-rose-600 align-middle">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </td>

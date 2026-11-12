@@ -1,5 +1,6 @@
 'use client';
 
+import { AppHeader } from '@/app/components/app-header';
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, RefreshCw, Users } from 'lucide-react';
@@ -40,52 +41,46 @@ export default function BenchmarkPage({ params }: { params: { group: string } })
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800/80 bg-slate-900/60">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-3">
-          <Link href="/" className="text-xs text-slate-400 hover:text-emerald-400 inline-flex items-center gap-1">
-            <ArrowLeft className="w-4 h-4" /> All audits
-          </Link>
-        </div>
-      </header>
+    <div className="min-h-screen text-neutral-900">
+      <AppHeader back={{ href: '/', label: 'All audits' }} />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        <h1 className="text-xl font-extrabold inline-flex items-center gap-2">
-          <Users className="w-5 h-5 text-emerald-400" /> Competitor benchmark
+        <h1 className="text-xl font-semibold inline-flex items-center gap-2">
+          <Users className="w-5 h-5 text-brand" /> Competitor benchmark
         </h1>
-        {error && <Card className="text-rose-300 text-sm">{error}</Card>}
+        {error && <Card className="text-rose-700 text-sm">{error}</Card>}
         {active && (
-          <Card className="text-xs text-slate-300 inline-flex items-center gap-2">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" /> {runs.filter((r) => r.status === 'completed').length} of {runs.length} audits finished — this page updates
+          <Card className="text-xs text-neutral-700 inline-flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand" /> {runs.filter((r) => r.status === 'completed').length} of {runs.length} audits finished — this page updates
             automatically.
           </Card>
         )}
         {runs.length > 0 && (
-          <div className="overflow-x-auto rounded-xl border border-slate-800">
+          <div className="overflow-x-auto rounded-md border border-neutral-200">
             <table className="w-full text-xs">
-              <thead className="bg-slate-900 text-slate-300">
+              <thead className="bg-white/60 text-neutral-700">
                 <tr>
                   <th className="text-left px-3 py-2 w-56">Metric</th>
                   {runs.map((r) => (
                     <th key={r.id} className="px-3 py-2 text-center">
-                      <Link href={`/runs/${r.id}`} className="hover:text-emerald-400">
+                      <Link href={`/runs/${r.id}`} className="hover:text-brand">
                         {r.store?.host || r.input.url}
                       </Link>
-                      <div className="text-[10px] font-normal text-slate-500">
+                      <div className="text-[10px] font-normal text-neutral-500">
                         {r.input.role === 'primary' ? 'your store' : 'competitor'} · {r.status}
                       </div>
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                <tr className="bg-slate-900/40">
+              <tbody className="divide-y divide-neutral-200/60">
+                <tr className="bg-white/45">
                   <td className="px-3 py-2 font-semibold">Overall score</td>
                   {runs.map((r) => cell(r.scores?.grade === 'Incomplete' ? null : r.scores?.overall))}
                 </tr>
                 <tr>
                   <td className="px-3 py-2">Grade</td>
                   {runs.map((r) => (
-                    <td key={r.id} className="px-3 py-2 text-center text-slate-300">
+                    <td key={r.id} className="px-3 py-2 text-center text-neutral-700">
                       {r.scores?.grade ?? '—'}
                     </td>
                   ))}
@@ -118,14 +113,14 @@ export default function BenchmarkPage({ params }: { params: { group: string } })
                 })}
                 {MODULES.map((m) => (
                   <tr key={m.id}>
-                    <td className="px-3 py-2 text-slate-300">{m.label}</td>
+                    <td className="px-3 py-2 text-neutral-700">{m.label}</td>
                     {runs.map((r) => cell(r.scores?.modules.find((x) => x.id === m.id)?.score ?? null))}
                   </tr>
                 ))}
                 <tr>
                   <td className="px-3 py-2">Critical + high issues</td>
                   {runs.map((r) => (
-                    <td key={r.id} className="px-3 py-2 text-center text-rose-300">
+                    <td key={r.id} className="px-3 py-2 text-center text-rose-700">
                       {r.status === 'completed' ? r.findings.filter((f) => f.severity === 'critical' || f.severity === 'high').length : '—'}
                     </td>
                   ))}
@@ -133,7 +128,7 @@ export default function BenchmarkPage({ params }: { params: { group: string } })
                 <tr>
                   <td className="px-3 py-2">Third-party apps detected</td>
                   {runs.map((r) => (
-                    <td key={r.id} className="px-3 py-2 text-center text-slate-300">
+                    <td key={r.id} className="px-3 py-2 text-center text-neutral-700">
                       {r.status === 'completed' ? r.apps.length : '—'}
                     </td>
                   ))}
@@ -142,7 +137,7 @@ export default function BenchmarkPage({ params }: { params: { group: string } })
             </table>
           </div>
         )}
-        <p className="text-[11px] text-slate-500">Competitors are audited with public checks only (up to 10 pages each). Underlined real-user values are the best in the group.</p>
+        <p className="text-[11px] text-neutral-500">Competitors are audited with public checks only (up to 10 pages each). Underlined real-user values are the best in the group.</p>
       </main>
     </div>
   );

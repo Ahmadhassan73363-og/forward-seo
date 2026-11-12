@@ -36,3 +36,7 @@ next-env.d.ts
 # audit run data
 /.data/
 .env
+
+# Google service account keys (Search Console)
+*service-account*.json
+gsc-key*.json

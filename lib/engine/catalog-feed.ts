@@ -127,3 +127,24 @@ export async function fetchCatalogFeed(baseUrl: string, isCancelled: () => boole
   if (notes.length) out.message = notes.join(' ');
   return out;
 }
+
+/**
+ * Product titles and collection titles from the first page of each public feed (one request each).
+ * Used to spot the store's products in AI answers and to phrase shopping prompts.
+ * Empty lists when the feed isn't available (not a Shopify store, or blocked).
+ */
+export async function fetchCatalogNames(baseUrl: string): Promise<{ products: string[]; collections: Array<{ title: string; count?: number }> }> {
+  const never = () => false;
+  const [p, c] = await Promise.all([
+    getPage<any>(`${baseUrl}/products.json?limit=${PAGE_SIZE}&page=1`, 'products', never),
+    getPage<any>(`${baseUrl}/collections.json?limit=${PAGE_SIZE}&page=1`, 'collections', never),
+  ]);
+  return {
+    products: p.ok ? p.items.map((x: any) => String(x?.title || '').trim()).filter(Boolean) : [],
+    collections: c.ok
+      ? c.items
+          .filter((x: any) => x?.handle !== 'frontpage' && x?.title)
+          .map((x: any) => ({ title: String(x.title).trim(), count: typeof x.products_count === 'number' ? x.products_count : undefined }))
+      : [],
+  };
+}

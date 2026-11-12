@@ -1,4 +1,6 @@
 // Shared, dependency-free types for the audit engine. Imported by both server and browser code.
+import type { AiInput, Ga4Data, MerchantData, AiVisibilityData, AiOverviewsData, OtterlyData } from './integration-types';
+export * from './integration-types';
 
 export type Strategy = 'mobile' | 'desktop';
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
@@ -192,6 +194,84 @@ export interface AhrefsData {
   siteExplorer?: SiteExplorerData;
 }
 
+/** Semrush data (SEMRUSH_API_KEY). Values are exactly what Semrush returned. */
+export interface SemrushData {
+  domain: string;
+  /** Semrush country database the keyword data comes from, and why it was chosen. */
+  database: string;
+  databaseReason: string;
+  fetchedAt: string;
+  status: 'ok' | 'partial' | 'unavailable';
+  message?: string;
+  /** Requests that failed, with Semrush's reason. */
+  errors: string[];
+  /** Semrush has no organic data for this domain in this database. */
+  notFound?: boolean;
+  overview?: { rank?: number; organicKeywords?: number; organicTraffic?: number; organicCost?: number };
+  backlinks?: { authorityScore?: number; backlinks?: number; referringDomains?: number };
+  keywords?: Array<{ keyword: string; position?: number; volume?: number; url?: string; trafficShare?: number }>;
+  topPages?: Array<{ url: string; keywords?: number; traffic?: number; trafficShare?: number }>;
+  /** API units left after this audit (free balance check). */
+  unitsLeft?: number;
+}
+
+/** Search Console metrics as Google returned them. ctr is a fraction (0.034 = 3.4%). */
+export interface GscMetrics {
+  clicks?: number;
+  impressions?: number;
+  ctr?: number;
+  position?: number;
+}
+
+/** URL Inspection result for one URL (Google's own index status). */
+export interface GscInspection {
+  url: string;
+  error?: string;
+  /** PASS | PARTIAL | FAIL | NEUTRAL */
+  verdict?: string;
+  /** e.g. "Submitted and indexed", "Crawled - currently not indexed" */
+  coverageState?: string;
+  indexingState?: string;
+  robotsTxtState?: string;
+  pageFetchState?: string;
+  lastCrawlTime?: string;
+  crawledAs?: string;
+  googleCanonical?: string;
+  userCanonical?: string;
+  richResults?: { verdict?: string; types: string[]; issues: string[] };
+  /** Opens this inspection in Search Console. */
+  link?: string;
+}
+
+/** Google Search Console data (GSC_SERVICE_ACCOUNT_JSON / _FILE). Values are exactly what Google returned. */
+export interface SearchConsoleData {
+  /** The service account's email (the address the site owner adds in Search Console). */
+  serviceAccount?: string;
+  /** The property used, e.g. "sc-domain:example.com" or "https://www.example.com/". */
+  property?: string;
+  fetchedAt: string;
+  /** no_access: the service account can't read a property for this site. */
+  status: 'ok' | 'partial' | 'no_access' | 'unavailable';
+  message?: string;
+  errors: string[];
+  range?: { start: string; end: string; days: number };
+  totals?: GscMetrics;
+  previous?: GscMetrics & { start: string; end: string };
+  daily?: Array<GscMetrics & { date: string }>;
+  queries?: Array<GscMetrics & { query: string }>;
+  pages?: Array<GscMetrics & { url: string }>;
+  devices?: Array<GscMetrics & { device: string }>;
+  countries?: Array<GscMetrics & { country: string }>;
+  /** Traffic per page template (home, product, collection pages). */
+  templates?: Array<GscMetrics & { template: 'home' | 'product' | 'collection' }>;
+  /** Searches containing the brand vs all other searches. */
+  brandSplit?: { terms: string[]; brand: GscMetrics; nonBrand: GscMetrics };
+  /** Top searches that don't contain the brand (also used as AI-visibility prompts and AI Overview keywords). */
+  nonBrandQueries?: Array<GscMetrics & { query: string }>;
+  sitemaps?: Array<{ path: string; type?: string; lastSubmitted?: string; lastDownloaded?: string; isPending: boolean; errors?: number; warnings?: number; submitted?: number }>;
+  inspections?: GscInspection[];
+}
+
 export interface CruxData {
   status: 'ok' | 'no_data' | 'unavailable';
   message?: string;
@@ -277,6 +357,8 @@ export interface RunInput {
   groupId?: string; // competitor benchmark group
   role?: 'primary' | 'competitor';
   scheduleId?: string;
+  /** AI visibility inputs (brand, competitors, prompts). */
+  ai?: AiInput;
 }
 
 // ─── Browser worker (Playwright) ────────────────────────────────────────────
@@ -427,6 +509,20 @@ export interface Run {
   crux?: CruxData;
   /** Ahrefs data (only when AHREFS_FREE_API_KEY or AHREFS_PAID_API_KEY is set). */
   ahrefs?: AhrefsData;
+  /** Semrush data (only when SEMRUSH_API_KEY is set). */
+  semrush?: SemrushData;
+  /** Google Search Console data (only when a service account key is set). */
+  searchConsole?: SearchConsoleData;
+  /** Google Analytics 4 (shared Google service account, GA4_ENABLED). */
+  ga4?: Ga4Data;
+  /** Google Merchant Center (shared Google service account, MERCHANT_ENABLED). */
+  merchant?: MerchantData;
+  /** Brand mentions and citations in ChatGPT / Perplexity / Gemini answers (sampled). */
+  aiVisibility?: AiVisibilityData;
+  /** Google AI Overviews for tracked keywords (SERP provider). */
+  aiOverviews?: AiOverviewsData;
+  /** Otterly.AI brand report. */
+  otterly?: OtterlyData;
   crawl: CrawledPage[];
   site?: SiteChecks;
   apps: AppCost[];

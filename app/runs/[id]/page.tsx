@@ -38,9 +38,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
   return (
     <Shell>
       {error ? (
-        <Card className="text-center text-rose-300">{error}</Card>
+        <Card className="text-center text-rose-700">{error}</Card>
       ) : !run ? (
-        <Card className="text-center text-slate-400">Loading…</Card>
+        <Card className="text-center text-neutral-600">Loading…</Card>
       ) : (
         <RunReport run={run} onCancel={cancel} />
       )}

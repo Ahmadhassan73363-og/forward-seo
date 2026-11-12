@@ -51,8 +51,9 @@ Status legend: ✅ built · 🟡 partly built · ⬜ planned
 | Site checks | robots.txt (+ AI bots), llms.txt, security headers, policy pages, /search, consent banner, hreflang | ✅ `lib/engine/site-checks.ts` | Non-catalog routes; not rate-limited. |
 | Shopify Admin API (GraphQL) | Every product's SEO fields, description, media alt, barcodes, inventory; collections; redirect count; `layout/theme.liquid` scripts | ✅ `lib/engine/shopify-admin.ts` | Owner mode, read-only scopes `read_products, read_content, read_themes`. Cost-throttle aware. Menus, markets, policies via API ⬜ |
 | Playwright browser worker | axe-core (WCAG 2.2 AA) after load and with the mobile menu open, rendered vs server JSON-LD, console errors, screenshots, add-to-cart → checkout flow | ✅ `lib/engine/browser.ts` | `playwright-core` + installed Chrome/Edge/Chromium (`CHROME_PATH` or auto-detect). Network waterfall ⬜ |
-| Google Search Console API | Index coverage, URL Inspection (~2,000/day/property), queries | ⬜ | Owner OAuth. |
-| Merchant Center API | Disapprovals, price/stock mismatches | ⬜ | Optional. |
+| Google Search Console API | Clicks, impressions, queries, pages, sitemaps, URL Inspection (sample) | ✅ `lib/engine/gsc/` | Service account added to the property ([SEARCH_CONSOLE.md](SEARCH_CONSOLE.md)). |
+| Merchant Center (Merchant API v1) | Free listings performance, product statuses, item issues | ✅ `lib/engine/merchant/` | Content API sunset 18 Aug 2026. |
+| GA4, AI answers (ChatGPT / Perplexity / Gemini), AI Overviews (DataForSEO), Otterly.AI, Screaming Frog import, KPIs CSV | SEO + AI SEO dashboard KPIs | ✅ `lib/engine/integrations.ts` | No storage. Setup in [SEO_AI_INTEGRATIONS.md](SEO_AI_INTEGRATIONS.md). |
 
 ---
 

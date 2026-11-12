@@ -3,48 +3,151 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 248, 250, 252;
-  --background-start-rgb: 8, 13, 26;
-  --background-end-rgb: 15, 23, 42;
+  --brand: #b71234;
+  --ink: #18181b;
+  /* Glass surfaces */
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-bg-strong: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.75);
+  --glass-edge: rgba(24, 24, 27, 0.06);
+  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 10px 30px -14px rgba(92, 9, 26, 0.18), 0 1px 2px rgba(24, 24, 27, 0.05);
+}
+
+html {
+  background: #f7f3f3;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: radial-gradient(ellipse at top, #0f172a 0%, #080d1a 100%);
+  color: var(--ink);
+  background: transparent;
   min-height: 100vh;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-feature-settings: 'tnum' 1; /* aligned figures in tables and stat cards */
 }
 
-/* Custom scrollbars */
+/* Static backdrop for the glass: soft brand-tinted light, drawn once (no animation, no images). */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42rem 30rem at 6% -8%, rgba(183, 18, 52, 0.17), transparent 62%),
+    radial-gradient(34rem 26rem at 102% 4%, rgba(236, 72, 113, 0.12), transparent 60%),
+    radial-gradient(40rem 30rem at 72% 108%, rgba(183, 18, 52, 0.1), transparent 62%),
+    radial-gradient(30rem 24rem at -6% 78%, rgba(251, 146, 160, 0.1), transparent 60%),
+    linear-gradient(180deg, #fbf8f8 0%, #f5f1f1 100%);
+}
+
+/* Thin brand line at the very top of every page */
+body::before {
+  content: '';
+  display: block;
+  height: 3px;
+  background: linear-gradient(90deg, #8f0e29, var(--brand) 40%, #d0284b);
+}
+
+@layer components {
+  /* Frosted panel: cards, tables, stat tiles */
+  .glass {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    backdrop-filter: blur(14px) saturate(160%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), 0 0 0 1px var(--glass-edge);
+  }
+  /* More opaque: header and tab bar, which sit over scrolling content */
+  .glass-strong {
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: blur(18px) saturate(170%);
+    backdrop-filter: blur(18px) saturate(170%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), 0 0 0 1px var(--glass-edge);
+  }
+  /* Inset area inside a glass panel (inputs, code, answer text) */
+  .glass-inset {
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(24, 24, 27, 0.08);
+  }
+  .lift {
+    transition: transform 160ms ease, box-shadow 160ms ease;
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--glass-shadow), 0 0 0 1px rgba(183, 18, 52, 0.18), 0 16px 34px -18px rgba(92, 9, 26, 0.28);
+  }
+}
+
+/* No blur support, or the user asked for less transparency: solid panels. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-strong {
+    background: rgba(255, 255, 255, 0.96);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong {
+    background: #fff;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lift,
+  .lift:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+a,
+button,
+summary {
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* Scrollbars */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-
-
-
-
-
-
-
-
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: rgba(24, 24, 27, 0.18);
   border-radius: 4px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: rgba(24, 24, 27, 0.32);
 }
-/* Print / Save as PDF: keep the dark report colours, hide controls */
+
+/* Print / Save as PDF: white page, flat panels, hide controls */
 @media print {
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+  }
+  html,
+  body {
+    background: #fff;
+  }
+  body::after {
+    display: none;
+  }
+  .glass,
+  .glass-strong {
+    background: #fff;
+    backdrop-filter: none;
+    box-shadow: none;
+    border-color: #e5e5e5;
   }
   .no-print,
   header,

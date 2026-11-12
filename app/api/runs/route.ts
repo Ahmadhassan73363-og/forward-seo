@@ -1,3 +1,4 @@
+import { parseAiInput } from '@/lib/engine/brand';
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createRun, ensureRecovered, pendingRuns, serverConfig } from '@/lib/engine/runner';
@@ -82,6 +83,7 @@ export async function POST(req: Request) {
       cartFlow: !!body.cartFlow,
       groupId,
       role: 'primary',
+      ai: parseAiInput(body.ai),
     },
     { apiKey, owner }
   );

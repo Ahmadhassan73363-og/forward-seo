@@ -1,6 +1,6 @@
 import { compareRuns, findPreviousRun, sendAlert } from './compare';
 import { executeRun } from './pipeline';
-import { ahrefsConfig } from './ahrefs';
+import { integrationsConfig } from './integrations';
 import { isDue, loadSchedules, updateSchedules } from './schedules';
 import type { OwnerCredentials } from './shopify-admin';
 import { EPHEMERAL, listRuns, loadRun, newRunId, saveRun } from './store';
@@ -65,6 +65,13 @@ async function recover() {
         site: undefined,
         crux: undefined,
         ahrefs: undefined,
+        semrush: undefined,
+        searchConsole: undefined,
+        ga4: undefined,
+        merchant: undefined,
+        aiVisibility: undefined,
+        aiOverviews: undefined,
+        otterly: undefined,
         browser: undefined,
         owner: undefined,
         catalog: undefined,
@@ -239,7 +246,8 @@ export function serverConfig() {
     ownerConfigured: !!(process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_TOKEN),
     ownerShop: process.env.SHOPIFY_SHOP || null,
     alertWebhook: !!process.env.ALERT_WEBHOOK_URL,
-    ahrefsPlan: ahrefsConfig().plan, // 'off' | 'free' | 'paid'; the key itself is never returned
+    // Third-party sources: plan names, booleans and the Google service account email only (never keys).
+    ...integrationsConfig(),
     // No-storage mode: audits stream live, nothing is kept, no schedules or competitor runs.
     ephemeral: EPHEMERAL,
   };
