@@ -15,6 +15,7 @@ Under **Vercel → Project → Settings → Environment Variables**:
 | `APP_PASSWORD` | Required. Without it every request gets "only answers on localhost". |
 | `APP_USER` | Optional sign-in name. |
 | `PSI_API_KEY` | Google key with the PageSpeed Insights API and Chrome UX Report API enabled. |
+| `AHREFS_FREE_API_KEY` or `AHREFS_PAID_API_KEY` | Optional. Adds Ahrefs data to the report ([AHREFS.md](AHREFS.md)). |
 | `AUDIT_TIME_BUDGET_SECONDS` | Optional, default 230. Must stay below the function limit. |
 | `LIVE_MAX_PAGES` | Optional, default 30. |
 

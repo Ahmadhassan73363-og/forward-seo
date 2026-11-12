@@ -28,7 +28,7 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [serverKey, setServerKey] = useState<boolean | null>(null);
-  const [caps, setCaps] = useState<{ browserAvailable: boolean; ownerConfigured: boolean; ownerShop: string | null; alertWebhook: boolean; ephemeral: boolean } | null>(null);
+  const [caps, setCaps] = useState<{ browserAvailable: boolean; ownerConfigured: boolean; ownerShop: string | null; alertWebhook: boolean; ephemeral: boolean; ahrefsPlan: 'off' | 'free' | 'paid' } | null>(null);
   const ephemeral = !!caps?.ephemeral;
   const [browserTests, setBrowserTests] = useState(true);
   const [cartFlow, setCartFlow] = useState(false);
@@ -47,7 +47,7 @@ export default function Home() {
         setServerKey(!!d.serverKey);
         setMaxPages(d.maxPages || 100);
         if (d.ephemeral) setPages((p) => Math.min(p, 10)); // a live audit must finish within one request
-        setCaps({ browserAvailable: !!d.browserAvailable, ownerConfigured: !!d.ownerConfigured, ownerShop: d.ownerShop, alertWebhook: !!d.alertWebhook, ephemeral: !!d.ephemeral });
+        setCaps({ browserAvailable: !!d.browserAvailable, ownerConfigured: !!d.ownerConfigured, ownerShop: d.ownerShop, alertWebhook: !!d.alertWebhook, ephemeral: !!d.ephemeral, ahrefsPlan: d.ahrefsPlan === 'paid' || d.ahrefsPlan === 'free' ? d.ahrefsPlan : 'off' });
       })
       .catch(() => setServerKey(false));
   }, []);
@@ -250,6 +250,12 @@ export default function Home() {
               <p className="text-[11px] text-slate-400 bg-slate-800/40 border border-slate-700/60 rounded-lg px-3 py-2">
                 Live mode: the audit runs while its tab is open and the report is not saved. Up to {maxPages} pages; large audits may hit the host&apos;s time limit, and
                 anything not finished is shown as “Not run”. Browser tests, cart flow, competitors and schedules need a server with storage.
+              </p>
+            )}
+            {caps && caps.ahrefsPlan !== 'off' && (
+              <p className="text-[11px] text-slate-400">
+                Ahrefs {caps.ahrefsPlan === 'paid' ? 'paid' : 'free'} key connected:{' '}
+                {caps.ahrefsPlan === 'paid' ? 'Domain Rating, backlinks, organic traffic, top pages and keywords' : 'Domain Rating'} will be added to the report.
               </p>
             )}
             {error && <p className="text-xs text-rose-300">{error}</p>}

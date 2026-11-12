@@ -4,10 +4,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, ArrowLeft, Bot, ChevronDown, ChevronRight, Cpu, Download, ExternalLink, FileText, Gauge, Layers, ListChecks, MousePointerClick, Printer, RefreshCw, ShieldCheck, Smartphone, Monitor, Store, TrendingDown, TrendingUp, Users, X } from 'lucide-react';
 import { BrowserTab, CatalogTab, shotUrl } from './report-extra';
+import { AhrefsTab, ahrefsTabLabel } from './ahrefs';
 import { MODULES, type Finding, type ModuleId, type PageSpeedTest, type Run, type Severity, type Strategy } from '@/lib/engine/types';
 import { Card, CopyButton, ScoreRing, SeverityBadge, cwvClass, fmtBytes, fmtMs, scoreBg, scoreColor, shortUrl } from './ui';
 
-type Tab = 'overview' | 'issues' | 'pages' | 'apps' | 'browser' | 'catalog' | 'site';
+type Tab = 'overview' | 'issues' | 'pages' | 'apps' | 'browser' | 'catalog' | 'site' | 'search';
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const moduleLabel = (id: ModuleId) => MODULES.find((m) => m.id === id)?.label || id;
 
@@ -114,6 +115,7 @@ export function RunReport({ run, onCancel, live }: { run: Run; onCancel?: () => 
                 ...(run.browser ? [['browser', 'Browser tests', MousePointerClick]] : []),
                 ...(run.owner || run.catalog ? [['catalog', 'Catalog', Store]] : []),
                 ['site', 'Site checks', ShieldCheck],
+                ...(run.ahrefs ? [['search', ahrefsTabLabel(run), TrendingUp]] : []),
               ] as Array<[Tab, string, any]>
             ).map(([id, label, Icon]) => (
               <button
@@ -133,6 +135,7 @@ export function RunReport({ run, onCancel, live }: { run: Run; onCancel?: () => 
           {tab === 'browser' && run.browser && <BrowserTab run={run} />}
           {tab === 'catalog' && (run.owner || run.catalog) && <CatalogTab run={run} />}
           {tab === 'site' && <Site run={run} />}
+          {tab === 'search' && run.ahrefs && <AhrefsTab run={run} />}
         </>
       )}
     </>

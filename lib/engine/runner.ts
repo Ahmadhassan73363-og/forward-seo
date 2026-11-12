@@ -1,5 +1,6 @@
 import { compareRuns, findPreviousRun, sendAlert } from './compare';
 import { executeRun } from './pipeline';
+import { ahrefsConfig } from './ahrefs';
 import { isDue, loadSchedules, updateSchedules } from './schedules';
 import type { OwnerCredentials } from './shopify-admin';
 import { EPHEMERAL, listRuns, loadRun, newRunId, saveRun } from './store';
@@ -63,6 +64,7 @@ async function recover() {
         warnings: ['The server restarted during this audit, so it was started again from the beginning.'],
         site: undefined,
         crux: undefined,
+        ahrefs: undefined,
         browser: undefined,
         owner: undefined,
         catalog: undefined,
@@ -237,6 +239,7 @@ export function serverConfig() {
     ownerConfigured: !!(process.env.SHOPIFY_SHOP && process.env.SHOPIFY_ADMIN_TOKEN),
     ownerShop: process.env.SHOPIFY_SHOP || null,
     alertWebhook: !!process.env.ALERT_WEBHOOK_URL,
+    ahrefsPlan: ahrefsConfig().plan, // 'off' | 'free' | 'paid'; the key itself is never returned
     // No-storage mode: audits stream live, nothing is kept, no schedules or competitor runs.
     ephemeral: EPHEMERAL,
   };

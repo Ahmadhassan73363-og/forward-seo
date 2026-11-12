@@ -3,6 +3,7 @@ import { discover, typeForPath } from '../audit/discover';
 import { aggregateApps } from './apps';
 import { fetchCatalogFeed } from './catalog-feed';
 import { fetchCrux } from './crux';
+import { fetchAhrefs } from './ahrefs';
 import { runBrowserTests } from './browser';
 import { appFindings, browserFindings, crawlFindings, cruxFindings, lighthouseFindings, mergeFindings, ownerFindings, siteFindings } from './findings';
 import { runOwnerAudit, type OwnerCredentials } from './shopify-admin';
@@ -343,13 +344,23 @@ export async function executeRun(run: Run, hooks: PipelineHooks): Promise<void> 
     await persist();
   };
 
+  // 2f. Ahrefs authority and search visibility (AHREFS_FREE_API_KEY / AHREFS_PAID_API_KEY; not scored)
+  const ahrefsTask = async () => {
+    if (hooks.isCancelled()) return;
+    run.ahrefs = await fetchAhrefs(ctx.host); // undefined when no Ahrefs key is configured
+    if (!run.ahrefs) return;
+    if (run.ahrefs.status === 'unavailable') run.warnings.push(`Ahrefs: ${run.ahrefs.message}`);
+    else if (run.ahrefs.siteExplorer?.message) run.warnings.push(`Ahrefs: ${run.ahrefs.siteExplorer.message}`);
+    await persist();
+  };
+
   // One failing part must not discard the others' results: turn errors into warnings.
   const safe = (name: string, task: () => Promise<void>) => () =>
     task().catch((e) => {
       run.warnings.push(`${name} stopped early: ${e?.message || e}. Results gathered before the error are kept.`);
     });
 
-  await Promise.all([safe('PageSpeed testing', psiTask)(), safe('Crawl', crawlTask)().then(safe('Browser tests', browserTask)), safe('Site checks', siteTask)(), safe('Owner mode', ownerTask)(), safe('Catalog feed', catalogTask)()]);
+  await Promise.all([safe('PageSpeed testing', psiTask)(), safe('Crawl', crawlTask)().then(safe('Browser tests', browserTask)), safe('Site checks', siteTask)(), safe('Ahrefs', ahrefsTask)(), safe('Owner mode', ownerTask)(), safe('Catalog feed', catalogTask)()]);
   if (hooks.isCancelled()) return;
 
   // 3. Analyse

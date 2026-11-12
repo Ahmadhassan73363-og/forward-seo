@@ -166,6 +166,32 @@ export interface CruxHistoryPoint {
   cls: number | null;
 }
 
+/** Which Ahrefs key is configured: AHREFS_FREE_API_KEY or AHREFS_PAID_API_KEY. */
+export type AhrefsPlan = 'free' | 'paid';
+
+/** Ahrefs Site Explorer data (paid plan with API access only). */
+export interface SiteExplorerData {
+  status: 'ok' | 'partial' | 'no_api_access' | 'failed';
+  message?: string;
+  backlinks?: { live?: number; liveRefdomains?: number; allTime?: number; allTimeRefdomains?: number };
+  organic?: { traffic?: number; keywords?: number; keywordsTop3?: number };
+  topPages?: Array<{ url: string; traffic?: number; keywords?: number; topKeyword?: string; topKeywordVolume?: number; topKeywordPosition?: number }>;
+  keywords?: Array<{ keyword: string; volume?: number; position?: number; url?: string }>;
+}
+
+/** Search visibility and authority from Ahrefs API v3. Values are exactly what Ahrefs returned. */
+export interface AhrefsData {
+  plan: AhrefsPlan;
+  target: string;
+  fetchedAt: string;
+  status: 'ok' | 'partial' | 'unavailable';
+  message?: string;
+  /** Free endpoint (any key). Must be credited "Domain Rating by Ahrefs". */
+  domainRating: { value?: number; error?: string; keyRejected?: boolean };
+  /** Only present with a paid key. */
+  siteExplorer?: SiteExplorerData;
+}
+
 export interface CruxData {
   status: 'ok' | 'no_data' | 'unavailable';
   message?: string;
@@ -399,6 +425,8 @@ export interface Run {
   targets: Array<{ url: string; type: string }>;
   psiTests: PageSpeedTest[];
   crux?: CruxData;
+  /** Ahrefs data (only when AHREFS_FREE_API_KEY or AHREFS_PAID_API_KEY is set). */
+  ahrefs?: AhrefsData;
   crawl: CrawledPage[];
   site?: SiteChecks;
   apps: AppCost[];
